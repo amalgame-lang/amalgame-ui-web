@@ -460,6 +460,7 @@ public class Page {
     public StylesheetUrl:  string         // primary stylesheet override
     public ExtraCss:       List<string>   // extra stylesheets appended after the baseline
     public UseBaseline:    bool           // inject the baseline <style> in <head>?
+    public ThemeMode:      string         // "auto" | "light" | "dark" (controls <html data-theme>)
 
     public Page() {
         this.Title          = ""
@@ -470,6 +471,7 @@ public class Page {
         this.StylesheetUrl  = ""
         this.ExtraCss       = new List<string>()
         this.UseBaseline    = true
+        this.ThemeMode      = "auto"
     }
 
     public static Page New() {
@@ -511,11 +513,58 @@ public class Page {
         return this
     }
 
+    // Force the page theme regardless of the OS preference. Accepts
+    // "auto" (default — defers to Page.DetectOSTheme), "light", or
+    // "dark". The resolved value is written as `<html data-theme>`
+    // at render time so the baseline `[data-theme=dark]` rules can
+    // key off it. Custom stylesheets can do the same.
+    public Page SetTheme(mode: string) {
+        this.ThemeMode = mode
+        return this
+    }
+
+    // Detect the OS color scheme. Returns "light" or "dark". Order:
+    //   1. `AMALGAME_UI_THEME` env var (explicit override)
+    //   2. macOS `defaults read -g AppleInterfaceStyle`
+    //   3. Windows `AppsUseLightTheme` registry DWORD
+    //   4. Linux `gsettings ... color-scheme` (GNOME 42+)
+    //   5. Linux `GTK_THEME` containing `:dark`
+    //   6. Defaults to "light" if no signal.
+    public static string DetectOSTheme() {
+        var r: string = "light"
+        @c {
+            const char* p = Amalgame_UI_Web_DetectOSTheme();
+            r = (code_string)(p ? p : "light");
+        }
+        return r
+    }
+
+    // Resolve the effective theme for this render. "auto" defers to
+    // Page.DetectOSTheme; "light"/"dark" pass through verbatim;
+    // anything else is treated as "auto" so callers can't accidentally
+    // emit garbage into the data-theme attribute.
+    public string EffectiveTheme() {
+        if (this.ThemeMode == "light") {
+            return "light"
+        }
+        if (this.ThemeMode == "dark") {
+            return "dark"
+        }
+        return Page.DetectOSTheme()
+    }
+
     // The baseline stylesheet — a tiny modern reset + system fonts
     // + form widget polish, themed via CSS variables that flip on
-    // `prefers-color-scheme: dark`. Modern webviews (WebView2,
-    // WKWebView, WebKitGTK) honor that media query natively, so the
-    // page tracks the OS theme automatically.
+    // `[data-theme=dark]` (set by Page.Render from the OS theme).
+    //
+    // We use the attribute selector rather than
+    // `prefers-color-scheme` because WebKitGTK does not propagate
+    // GNOME/KDE's color scheme to the embedded page. By detecting
+    // the OS theme ourselves and writing `data-theme` on `<html>`,
+    // light/dark works consistently across WebView2, WKWebView, and
+    // WebKitGTK. `prefers-color-scheme` is kept as a secondary
+    // fallback for cases where the user bypasses Page.Render and
+    // ships their own raw HTML.
     //
     // Override individual variables in your own stylesheet rather
     // than rewriting the whole rule set:
@@ -525,8 +574,9 @@ public class Page {
     // Variables surface: --amc-bg, --amc-fg, --amc-muted,
     // --amc-border, --amc-surface, --amc-accent, --amc-radius.
     public static string BaselineCss() {
-        var c: string = ":root{--amc-bg:#fff;--amc-fg:#1a1a1a;--amc-muted:#6a6a6a;--amc-border:#d0d0d0;--amc-surface:#f5f5f5;--amc-accent:#0066cc;--amc-radius:4px}"
-        c = c + "@media(prefers-color-scheme:dark){:root{--amc-bg:#1e1e1e;--amc-fg:#e8e8e8;--amc-muted:#9a9a9a;--amc-border:#404040;--amc-surface:#2a2a2a;--amc-accent:#4a9eff}}"
+        var c: string = ":root{--amc-bg:#fff;--amc-fg:#1a1a1a;--amc-muted:#6a6a6a;--amc-border:#d0d0d0;--amc-surface:#f5f5f5;--amc-accent:#0066cc;--amc-radius:4px;color-scheme:light}"
+        c = c + "[data-theme=dark]{--amc-bg:#1e1e1e;--amc-fg:#e8e8e8;--amc-muted:#9a9a9a;--amc-border:#404040;--amc-surface:#2a2a2a;--amc-accent:#4a9eff;color-scheme:dark}"
+        c = c + "@media(prefers-color-scheme:dark){:root:not([data-theme=light]){--amc-bg:#1e1e1e;--amc-fg:#e8e8e8;--amc-muted:#9a9a9a;--amc-border:#404040;--amc-surface:#2a2a2a;--amc-accent:#4a9eff;color-scheme:dark}}"
         c = c + "*{box-sizing:border-box}"
         c = c + "body{margin:0;padding:16px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:14px;line-height:1.5;color:var(--amc-fg);background:var(--amc-bg)}"
         c = c + "h1,h2,h3{margin:0 0 8px}p{margin:0 0 8px}"
@@ -539,12 +589,18 @@ public class Page {
     }
 
     // Render the page to a complete HTML document and accumulate
-    // bindings for every OnClick handler in the tree.
+    // bindings for every OnClick handler in the tree. The opening
+    // `<html>` carries a `data-theme="dark|light"` attribute so
+    // baseline rules (and any user CSS that respects the same
+    // attribute) can theme the document without depending on
+    // `prefers-color-scheme` — useful since WebKitGTK doesn't
+    // propagate the OS color scheme to the page.
     public string Render() {
         this.BindNames    = new List<string>()
         this.BindHandlers = new List<Closure>()
         this.Counter      = 0
-        var html: string = "<!DOCTYPE html><html><head><meta charset=utf-8>"
+        let theme: string = this.EffectiveTheme()
+        var html: string = "<!DOCTYPE html><html data-theme=\"" + Html.Escape(theme) + "\"><head><meta charset=utf-8>"
         html = html + "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
         html = html + "<title>" + Html.Escape(this.Title) + "</title>"
         if (this.UseBaseline) {

@@ -168,9 +168,12 @@ class Page {
     Page SetStylesheet(url: string)               // v0.0.4 — replace baseline
     Page AddCss(url: string)                      // v0.0.4 — layer on top
     Page NoBaseline()                             // v0.0.4 — disable baseline
+    Page SetTheme(mode: string)                   // v0.0.4 — "auto" | "light" | "dark"
+    string EffectiveTheme()                       // v0.0.4 — resolved "light" or "dark"
     string Render()
     void   ApplyTo(win: Window)
     static string BaselineCss()                   // v0.0.4 — exposed for inspection
+    static string DetectOSTheme()                 // v0.0.4 — "light" or "dark"
 }
 ```
 
@@ -195,9 +198,18 @@ stylesheet without re-authoring the whole rule set:
 | `--amc-accent`    | `#0066cc`     | `#4a9eff`    | focus outline (reserved)      |
 | `--amc-radius`    | `4px`         | `4px`        | input / button border-radius  |
 
-The dark variant flips under `@media (prefers-color-scheme: dark)`,
-which modern webviews (WebView2 / WKWebView / WebKitGTK) honor
-natively from the OS theme — no AM-side detection needed.
+The dark variant keys off `[data-theme=dark]` on `<html>`, which
+`Page.Render` writes from the OS theme detection (`gsettings`
+on Linux, `defaults` on macOS, registry on Windows). A secondary
+`@media (prefers-color-scheme: dark)` fallback applies when
+the caller bypasses `Render` and ships raw HTML.
+
+On Linux specifically, dark mode also flips
+`GtkSettings::gtk-application-prefer-dark-theme` at window
+creation so the native `<select>` popup, scrollbars, and file
+dialogs (rendered by GTK, not the webview) match the page theme.
+Override with `Page.SetTheme("light"|"dark")` or by exporting
+`AMALGAME_UI_THEME=dark` before launch.
 
 Override an individual variable from a custom stylesheet:
 

@@ -104,6 +104,23 @@ int  Amalgame_UI_Web_Unbind(int slot, const char* name);
 int  Amalgame_UI_Web_Return(int slot, const char* seq, int status,
                             const char* result);
 
+/* v0.0.4 — OS theme detection.
+ *
+ * Returns "dark" or "light" based on the running OS's preferences:
+ *   - macOS  : `defaults read -g AppleInterfaceStyle` (Dark = dark).
+ *   - Windows: registry AppsUseLightTheme (0 = dark, 1 = light).
+ *   - Linux  : `gsettings get org.gnome.desktop.interface color-scheme`
+ *              (`'prefer-dark'` → dark); falls back to GTK_THEME env
+ *              substring `:dark`.
+ *
+ * Environment override: AMALGAME_UI_THEME=dark|light wins over OS
+ * detection. Useful in tests and in apps that expose an in-app
+ * theme switcher.
+ *
+ * The return pointer points into a static string literal — do not
+ * free, and do not assume it persists across threads. */
+const char* Amalgame_UI_Web_DetectOSTheme(void);
+
 #ifdef __cplusplus
 }
 #endif
