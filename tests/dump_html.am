@@ -14,19 +14,10 @@ import Amalgame.UI.Web
 
 class Program {
     public static void Main() {
-        // ListView headers + rows (must be List<string>).
-        let headers: List<string> = new List<string>()
-        headers.Add("Name")
-        headers.Add("Size")
-        headers.Add("Modified")
-        let row1: List<string> = new List<string>()
-        row1.Add("readme.md")
-        row1.Add("2 KB")
-        row1.Add("today")
-        let row2: List<string> = new List<string>()
-        row2.Add("facade.am")
-        row2.Add("32 KB")
-        row2.Add("now")
+        // ListView headers + rows — list literals (amc v0.8.14+).
+        let headers: List<string> = ["Name", "Size", "Modified"]
+        let row1:    List<string> = ["readme.md",  "2 KB",  "today"]
+        let row2:    List<string> = ["facade.am", "32 KB", "now"]
 
         // Block A — original spike form (v0.0.3/0.0.4).
         let blockA: Element = Element.Stack()
