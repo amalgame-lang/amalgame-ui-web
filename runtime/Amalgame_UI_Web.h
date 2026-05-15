@@ -29,10 +29,23 @@
  *   - Amalgame_UI_Web_Run(slot)              (block on event loop)
  *   - Amalgame_UI_Web_Terminate(slot)
  *
- * IPC (webview_bind callback) is deferred to v0.0.2 — the C
- * callback shape doesn't yet have a clean Amalgame closure ABI
- * across all targets. Workaround: drive the JS side via Eval() and
- * have the page POST to a local http server hosted from Amalgame.
+ * v0.0.2 additions — bidirectional IPC:
+ *   - Amalgame_UI_Web_Bind(slot, name, closure)   register JS handler
+ *   - Amalgame_UI_Web_Unbind(slot, name)
+ *   - Amalgame_UI_Web_Return(slot, seq, st, res)  reply from a handler
+ *
+ * The Bind call takes an AmalgameClosure* (cast to void*). The C
+ * trampoline dispatches the JS request through AmalgameClosure_call2
+ * with (req: code_string, NULL); the closure returns a code_string
+ * that the trampoline forwards to webview_return automatically.
+ *
+ * Handler signature on the Amalgame side (single string arg):
+ *
+ *     fn(req: string) -> string
+ *
+ * `req` is the JSON-encoded JS argument array (so `window.foo(1, "x")`
+ * gives `req == "[1,\"x\"]"`). Return any string — it's parsed back
+ * as JSON on the JS side and becomes the awaited value.
  *
  * Linking:
  *   Linux  : -lwebkit2gtk-4.1 (pkg-config webkit2gtk-4.1)
@@ -71,6 +84,25 @@ int  Amalgame_UI_Web_Init(int slot, const char* js);
 int  Amalgame_UI_Web_Eval(int slot, const char* js);
 int  Amalgame_UI_Web_Run(int slot);
 int  Amalgame_UI_Web_Terminate(int slot);
+
+/* v0.0.2 — bidirectional IPC.
+ *
+ * Bind: register `closure` (an AmalgameClosure*, cast to void* at the
+ * call boundary) as the handler for `window.<name>(...)` calls from
+ * JS. Returns 0 on success, non-zero if the registry is full or the
+ * slot is invalid.
+ *
+ * Unbind: drop the binding. Idempotent.
+ *
+ * Return: usually not called from Amalgame — the trampoline auto-
+ * forwards the closure's return value. Exposed for advanced cases
+ * where the handler needs to defer the response (e.g. async I/O). */
+#define AMALGAME_UI_WEB_MAX_BINDINGS 64
+
+int  Amalgame_UI_Web_Bind(int slot, const char* name, void* closure);
+int  Amalgame_UI_Web_Unbind(int slot, const char* name);
+int  Amalgame_UI_Web_Return(int slot, const char* seq, int status,
+                            const char* result);
 
 #ifdef __cplusplus
 }

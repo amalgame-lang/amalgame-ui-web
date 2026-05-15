@@ -165,4 +165,311 @@ public class Window {
             this.Slot = -1
         }
     }
+
+    // Register an Amalgame handler for `window.<name>(...)` calls
+    // made from the JS side of the webview. The handler receives
+    // the JSON-encoded JS argument list (e.g. `window.foo(1,"x")`
+    // arrives as the string `[1,"x"]`) and MUST return valid JSON —
+    // webview_return parses the result on the JS side. Examples:
+    //
+    //     win.Bind("echo",  (req: string) => req)             // echoes args back
+    //     win.Bind("ping",  (req: string) => "\"pong\"")      // string  → "pong"
+    //     win.Bind("count", (req: string) => "42")             // number  → 42
+    //     win.Bind("ok",    (req: string) => "{\"ok\":true}") // object  → {ok:true}
+    //
+    // Returning raw text without proper JSON quoting will surface
+    // as `Unhandled Promise Rejection: Error: Failed to parse
+    // binding result as JSON` on the JS side. For free-form strings
+    // with user content, escape via Amalgame.Formats.Json before
+    // wrapping in quotes.
+    //
+    // The handler MUST be a typed-param lambda: the multi-param
+    // form `(req: string) => …` tells amc to pass `req` as a
+    // pointer rather than the legacy boxed i64. Single-arg bare
+    // form `req => …` would type `req` as i64 and segfault on the
+    // first character access.
+    //
+    // Implementation note: the lambda's AmalgameClosure* is stored
+    // on the C side in a fixed-size registry (cap 64) keyed by
+    // (slot, name). The C trampoline dispatches every JS call via
+    // AmalgameClosure_call2(req, NULL) and forwards the returned
+    // code_string back to JS through webview_return automatically.
+    public void Bind(name: string, handler: Closure) {
+        let s: int = this.Slot
+        @c {
+            Amalgame_UI_Web_Bind(s, name, (void*)handler);
+        }
+    }
+
+    // Drop a previously-registered binding. Idempotent.
+    public void Unbind(name: string) {
+        let s: int = this.Slot
+        @c {
+            Amalgame_UI_Web_Unbind(s, name);
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  v0.0.3 — Higher-level HTML builder API
+// ═══════════════════════════════════════════════════════════
+//
+// `Element` + `Page` let apps compose a webview UI in Amalgame
+// without writing HTML strings by hand. Render() produces an HTML
+// document; ApplyTo(window) pushes it into the webview and
+// auto-registers every OnClick handler via Window.Bind.
+//
+// Use the raw Window.SetHtml / .Navigate path when you need full
+// control (custom CSS framework, hand-written HTML, embedded
+// templates, etc). The builder is sugar, not a wall.
+//
+// Example:
+//
+//     let page = Page.New()
+//         .SetTitle("My App")
+//         .SetBody(
+//             Element.Stack()
+//                 .AddChild(Element.Label("Hello, world"))
+//                 .AddChild(Element.Button("Save")
+//                     .OnClick((req: string) => "true"))
+//         )
+//     page.ApplyTo(win)
+//     win.Run()
+
+// ─── Tiny HTML / JSON escape helpers ──────────────────────
+
+public class Html {
+    // Minimal HTML escape — covers the attack surface for
+    // user-supplied text content and attribute values. Order
+    // matters: `&` first so we don't double-escape the entities
+    // we're emitting.
+    public static string Escape(s: string) {
+        var r: string = s
+        r = String_Replace(r, "&", "&amp;")
+        r = String_Replace(r, "<", "&lt;")
+        r = String_Replace(r, ">", "&gt;")
+        r = String_Replace(r, "\"", "&quot;")
+        return r
+    }
+}
+
+public class Json {
+    // JSON-encode a single string value — wraps in double quotes
+    // and escapes `\` and `"`. Doesn't handle control characters
+    // or non-ASCII (UTF-8 passes through as-is, which most JSON
+    // parsers accept).
+    //
+    // For Bind handlers, wrap your free-form return strings with
+    // this so the JS side receives a proper string value rather
+    // than a parse error:
+    //
+    //     win.Bind("save", (req: string) => Json.EncodeString("ok"))
+    public static string EncodeString(s: string) {
+        var r: string = s
+        r = String_Replace(r, "\\", "\\\\")
+        r = String_Replace(r, "\"", "\\\"")
+        return "\"" + r + "\""
+    }
+}
+
+// ─── Element ───────────────────────────────────────────────
+//
+// A node in the HTML tree. Static builders cover the common cases
+// (Stack, Row, Label, Button, Input); for anything else, drop down
+// to `new Element("custom-tag")` and Attr() chains.
+
+public class Element {
+    public Tag:        string
+    public Text:       string
+    public Children:   List<Element>
+    public AttrKeys:   List<string>
+    public AttrVals:   List<string>
+    public ClickFn:    Closure
+    public HasClick:   bool
+
+    public Element(tag: string) {
+        this.Tag      = tag
+        this.Text     = ""
+        this.Children = new List<Element>()
+        this.AttrKeys = new List<string>()
+        this.AttrVals = new List<string>()
+        this.HasClick = false
+    }
+
+    public Element SetText(t: string) {
+        this.Text = t
+        return this
+    }
+
+    public Element AddChild(child: Element) {
+        this.Children.Add(child)
+        return this
+    }
+
+    public Element Attr(name: string, value: string) {
+        this.AttrKeys.Add(name)
+        this.AttrVals.Add(value)
+        return this
+    }
+
+    public Element Id(id: string)     { return this.Attr("id", id) }
+    public Element Class(cls: string) { return this.Attr("class", cls) }
+    public Element Style(s: string)   { return this.Attr("style", s) }
+
+    // Wire a click handler. Page.Render() walks the tree and
+    // allocates a JS-callable name `_amc_<n>` per OnClick; ApplyTo
+    // then registers each via Window.Bind. The handler receives a
+    // JSON args array (empty `[]` for plain clicks) and must
+    // return valid JSON.
+    public Element OnClick(handler: Closure) {
+        this.ClickFn  = handler
+        this.HasClick = true
+        return this
+    }
+
+    // ── Static builders ────────────────────────────────────
+
+    // Generic block container.
+    public static Element Div() {
+        return new Element("div")
+    }
+
+    // Flex column with 8 px gap. Use for vertical UI layouts.
+    public static Element Stack() {
+        let e: Element = new Element("div")
+        return e.Style("display:flex;flex-direction:column;gap:8px")
+    }
+
+    // Flex row with 8 px gap + vertical-center.
+    public static Element Row() {
+        let e: Element = new Element("div")
+        return e.Style("display:flex;flex-direction:row;gap:8px;align-items:center")
+    }
+
+    // Plain text paragraph.
+    public static Element Label(text: string) {
+        let e: Element = new Element("p")
+        return e.SetText(text)
+    }
+
+    // <h1> heading.
+    public static Element Heading(text: string) {
+        let e: Element = new Element("h1")
+        return e.SetText(text)
+    }
+
+    // Native button. Wire via .OnClick(handler) to call back into
+    // Amalgame; otherwise it's a no-op visual.
+    public static Element Button(text: string) {
+        let e: Element = new Element("button")
+        return e.SetText(text)
+    }
+
+    // Single-line text input. `name` is the HTML `name` attribute
+    // and the conventional way for callers to read the value back
+    // (e.g. via a form-style Bind handler reading req JSON).
+    public static Element Input(name: string) {
+        let e: Element = new Element("input")
+        return e.Attr("name", name).Attr("type", "text")
+    }
+
+    // <pre> for monospace output panels.
+    public static Element Pre(text: string) {
+        let e: Element = new Element("pre")
+        return e.SetText(text)
+    }
+}
+
+// ─── Page ──────────────────────────────────────────────────
+//
+// Top-level HTML document holder. Render() walks the element tree,
+// collects every OnClick into a parallel (name, closure) list;
+// ApplyTo(window) calls SetHtml + Window.Bind in one shot.
+//
+// Pages are stateful (the bindings list grows during Render). Call
+// Render or ApplyTo at most once per `Window` instance — re-rendering
+// is supported but you'll need to Unbind the previous names yourself
+// or the JS side will accumulate dead listeners.
+
+public class Page {
+    public Title:        string
+    public Body:         Element
+    public BindNames:    List<string>
+    public BindHandlers: List<Closure>
+    public Counter:      int
+
+    public Page() {
+        this.Title        = ""
+        this.Body         = new Element("div")
+        this.BindNames    = new List<string>()
+        this.BindHandlers = new List<Closure>()
+        this.Counter      = 0
+    }
+
+    public static Page New() {
+        return new Page()
+    }
+
+    public Page SetTitle(t: string) {
+        this.Title = t
+        return this
+    }
+
+    public Page SetBody(e: Element) {
+        this.Body = e
+        return this
+    }
+
+    // Render the page to a complete HTML document and accumulate
+    // bindings for every OnClick handler in the tree.
+    public string Render() {
+        this.BindNames    = new List<string>()
+        this.BindHandlers = new List<Closure>()
+        this.Counter      = 0
+        var html: string = "<!DOCTYPE html><html><head><meta charset=utf-8>"
+        html = html + "<title>" + Html.Escape(this.Title) + "</title>"
+        html = html + "</head><body>"
+        html = html + this.RenderElement(this.Body)
+        html = html + "</body></html>"
+        return html
+    }
+
+    // Walk one element. Recursive — children render inside.
+    public string RenderElement(e: Element) {
+        var s: string = "<" + e.Tag
+        let nk: int = e.AttrKeys.Count()
+        for i in 0..nk {
+            let k: string = e.AttrKeys.Get(i)
+            let v: string = e.AttrVals.Get(i)
+            s = s + " " + k + "=\"" + Html.Escape(v) + "\""
+        }
+        if (e.HasClick) {
+            this.Counter = this.Counter + 1
+            let bname: string = "_amc_" + String_FromInt(this.Counter)
+            this.BindNames.Add(bname)
+            this.BindHandlers.Add(e.ClickFn)
+            s = s + " onclick=\"window." + bname + "()\""
+        }
+        s = s + ">"
+        if (String_Length(e.Text) > 0) {
+            s = s + Html.Escape(e.Text)
+        }
+        let nc: int = e.Children.Count()
+        for i in 0..nc {
+            s = s + this.RenderElement(e.Children.Get(i))
+        }
+        s = s + "</" + e.Tag + ">"
+        return s
+    }
+
+    // Push the page into a window. Sets HTML, registers each
+    // OnClick handler via Window.Bind.
+    public void ApplyTo(win: Window) {
+        let html: string = this.Render()
+        win.SetHtml(html)
+        let n: int = this.BindNames.Count()
+        for i in 0..n {
+            win.Bind(this.BindNames.Get(i), this.BindHandlers.Get(i))
+        }
+    }
 }

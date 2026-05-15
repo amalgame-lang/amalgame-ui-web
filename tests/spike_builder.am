@@ -1,0 +1,48 @@
+import Amalgame.UI.Web
+
+// Spike for amalgame-ui-web v0.0.3 — HTML builder + auto-Bind.
+//
+// Uses the fluent chain style now that amc v0.8.12+ fixes the
+// cross-package chained-call bug (was: Type.Static().Method()
+// emitted Type_Static()_Method(); now: Type_Method(Type_Static())).
+
+class Program {
+    public static void Main() {
+        let win: Window = new Window("Amalgame.UI.Web — Builder demo", 700, 500, true)
+        if (!win.IsValid()) {
+            return
+        }
+
+        let page: Page = Page.New()
+            .SetTitle("Builder demo")
+            .SetBody(
+                Element.Stack()
+                    .AddChild(Element.Heading("v0.0.3 HTML builder"))
+                    .AddChild(Element.Label("AM-side composition, no inline HTML strings"))
+                    .AddChild(Element.Input("name").Attr("placeholder", "your name"))
+                    .AddChild(
+                        Element.Row()
+                            .AddChild(
+                                Element.Button("Greet")
+                                    .OnClick((req: string) => Json.EncodeString("Hello from Amalgame!"))
+                            )
+                            .AddChild(
+                                Element.Button("Reverse")
+                                    .OnClick((req: string) => Json.EncodeString("(reverse not wired yet)"))
+                            )
+                    )
+                    .AddChild(Element.Pre("(click a button)").Id("out"))
+            )
+
+        page.ApplyTo(win)
+
+        // Bridge: when a button is clicked, look up its bound name
+        // from the onclick attr, invoke it, drop the result into
+        // <pre id=out>. v0.0.4 will replace this with a proper
+        // .OnClick wiring that targets a result-sink declaratively.
+        win.Init("document.addEventListener('click', async (e) => { if (e.target.tagName === 'BUTTON') { const m = (e.target.getAttribute('onclick') || '').match(/window\\.(\\w+)/); if (m) { e.preventDefault(); const r = await window[m[1]](); document.getElementById('out').textContent = r; } } }, true)")
+
+        win.Run()
+        win.Destroy()
+    }
+}
