@@ -56,8 +56,12 @@ class Program {
             .AddChild(leftPane.Style("padding:8px"))
             .AddChild(rightWithCtx)
 
-        // Top menubar.
+        // Top menubar. .UseNative(true) is a forward marker — the
+        // common HTML/CSS path runs today; v0.1.0 will activate the
+        // OS-native bridge (Win32 / NSMenu / GtkMenuBar) for callers
+        // that opted in.  Drop the call to stay common-only.
         let menubar: Element = Element.MenuBar()
+            .UseNative(false)
             .AddChild(Element.MenuItem("File")
                 .AddChild(Element.MenuOption("New",    "amc_menu_new"))
                 .AddChild(Element.MenuOption("Open…",  "amc_menu_open"))
@@ -85,7 +89,10 @@ class Program {
         let win: Window = new Window("amalgame-ui-web v0.0.8 — IDE shell demo", 900, 600, true)
         if (!win.IsValid()) { return }
 
-        let page: Page = Page.New().SetTitle("v0.0.8 spike").SetBody(body)
+        // FullBleed() strips the 16px body padding so the MenuBar
+        // sits flush against the top edge and the SplitContainer
+        // fills the rest — proper IDE-shell look.
+        let page: Page = Page.New().SetTitle("v0.0.8 spike").FullBleed().SetBody(body)
 
         // Menu actions — File / Edit / View handlers.
         win.Bind("amc_menu_new", (req: string) => {
