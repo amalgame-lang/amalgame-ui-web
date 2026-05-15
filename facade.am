@@ -1338,13 +1338,16 @@ public class Page {
         c = c + "input[type=range],input[type=checkbox],input[type=radio]{padding:0;border:none;background:transparent;outline:none;width:auto}"
         c = c + "input[type=range]{width:200px;accent-color:var(--amc-accent)}"
         c = c + "input[type=checkbox],input[type=radio]{accent-color:var(--amc-accent);width:16px;height:16px}"
-        // <input type=number> spin buttons. WebKit hides them by
-        // default and reveals on hover, which momentarily eats
-        // ~16px of padding-right and visibly shifts the layout.
-        // Force them always-visible (opacity:1) so the box width
-        // doesn't change between hovered / non-hovered states —
-        // and the user keeps the up/down arrows.
-        c = c + "input[type=number]::-webkit-inner-spin-button,input[type=number]::-webkit-outer-spin-button{opacity:1}"
+        // <input type=number> hover-jitter fix. Two things were
+        // happening on WebKit / WebKitGTK: (1) the spin buttons
+        // hide-then-show on hover, eating ~16px of padding-right;
+        // (2) the spin button height auto-fits its content, growing
+        // the input box vertically a few pixels — that bubbles up
+        // the flex parent and re-flows everything above it.
+        // Pin the input height + always-show the spinners + fix
+        // their height to the parent so neither dimension flexes.
+        c = c + "input[type=number]{height:32px;box-sizing:border-box}"
+        c = c + "input[type=number]::-webkit-inner-spin-button,input[type=number]::-webkit-outer-spin-button{opacity:1;height:100%;margin:0}"
         // v0.0.5 — color picker: the generic input rule shrinks the
         // native swatch to ~14 px because of padding + var(--amc-bg)
         // bg. Reset to a sane size so the selected color is actually
