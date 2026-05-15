@@ -23,6 +23,12 @@ class Program {
                     .AddChild(Element.Radio("priority", "low"))
                     .AddChild(Element.Radio("priority", "high"))
                     .AddChild(Element.Button("Go").OnClick((req: string) => req))
+                    .AddChild(
+                        Element.Button("Echo")
+                            .OnClick((req: string) => req)
+                            .OnResult("out")
+                    )
+                    .AddChild(Element.Pre("").Id("out"))
             )
         Console.WriteLine(page.Render())
     }
