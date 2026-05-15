@@ -39,6 +39,7 @@ for the per-release detail.
 | IPC: Amalgame ← JS (`Window.Bind`)          | ✓ v0.0.2 |
 | HTML builder API (`Element` / `Page`)       | ✓ v0.0.3 |
 | Form reading (auto-collect input state)     | ✓ v0.0.4 |
+| OS theme auto + baseline CSS + overrides    | ✓ v0.0.4 |
 | Native menubar / dialogs / tray             | ✗ — v0.1+ |
 | Multi-window (>1 simultaneous)              | Up to 4 slots, single-window recommended |
 | Custom URL scheme (`am://`)                 | ✗ — v0.1+ |
@@ -164,8 +165,12 @@ class Element {
 class Page {
     static Page New()
     Page SetTitle(t: string) / SetBody(e: Element)
+    Page SetStylesheet(url: string)               // v0.0.4 — replace baseline
+    Page AddCss(url: string)                      // v0.0.4 — layer on top
+    Page NoBaseline()                             // v0.0.4 — disable baseline
     string Render()
     void   ApplyTo(win: Window)
+    static string BaselineCss()                   // v0.0.4 — exposed for inspection
 }
 ```
 
@@ -173,6 +178,47 @@ The API is designed forward-compatible with v0.1+ additions —
 existing app code will *not* break when native menus, dialogs,
 tray, multi-window, custom URL schemes, and typed IPC land. See
 the proposal in the main Amalgame repo for the full v1 surface.
+
+## Theming (v0.0.4)
+
+`Page.Render` ships a baseline stylesheet by default. The baseline
+exposes seven CSS variables you can override from your own
+stylesheet without re-authoring the whole rule set:
+
+| Variable          | Light default | Dark default | Used by                       |
+|-------------------|---------------|--------------|-------------------------------|
+| `--amc-bg`        | `#fff`        | `#1e1e1e`    | body background, inputs       |
+| `--amc-fg`        | `#1a1a1a`     | `#e8e8e8`    | body text, all controls       |
+| `--amc-muted`     | `#6a6a6a`     | `#9a9a9a`    | secondary text (reserved)     |
+| `--amc-border`    | `#d0d0d0`     | `#404040`    | input / button borders        |
+| `--amc-surface`   | `#f5f5f5`     | `#2a2a2a`    | button bg, pre bg             |
+| `--amc-accent`    | `#0066cc`     | `#4a9eff`    | focus outline (reserved)      |
+| `--amc-radius`    | `4px`         | `4px`        | input / button border-radius  |
+
+The dark variant flips under `@media (prefers-color-scheme: dark)`,
+which modern webviews (WebView2 / WKWebView / WebKitGTK) honor
+natively from the OS theme — no AM-side detection needed.
+
+Override an individual variable from a custom stylesheet:
+
+```css
+:root { --amc-accent: #ff6b00 }
+```
+
+Three ways to bring your own styles:
+
+```amalgame
+// Baseline + your overrides layered on top
+Page.New().AddCss("file:///abs/app/overrides.css")
+
+// Skip the baseline, ship your own complete stylesheet
+Page.New().SetStylesheet("file:///abs/app/style.css")
+
+// Skip the baseline, layer multiple stylesheets
+Page.New().NoBaseline()
+    .AddCss("https://unpkg.com/@picocss/pico@2/css/pico.min.css")
+    .AddCss("file:///abs/app/app.css")
+```
 
 ## Architecture
 
