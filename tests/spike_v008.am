@@ -1,0 +1,130 @@
+import Amalgame.UI.Web
+
+// v0.0.8 spike — MenuBar + ContextMenu + SplitContainer + OpenFileContent.
+//
+// Lays out a 3-section app shell:
+//   1. Top: MenuBar (File / Edit / View)
+//   2. Middle: SplitContainer (TreeView left, content panel right)
+//   3. Bottom: StatusStrip
+//
+// Right-click anywhere inside the right pane opens the ContextMenu.
+// File -> Open opens a file picker and shows the read content
+// in the right pane.
+
+class Program {
+    public static void Main() {
+        // Right pane content — text area + label that we'll
+        // populate from File > Open.
+        let rightPane: Element = Element.Stack()
+            .AddChild(Element.Heading("Editor").Style("margin:0"))
+            .AddChild(Element.Label("Pick File > Open from the menu to load a file's content here.").Id("editor-status"))
+            .AddChild(Element.Textarea("editor-body")
+                .Attr("placeholder", "(file content will appear here)")
+                .Style("flex:1;min-height:0;font-family:ui-monospace,monospace")
+                .Id("editor-body"))
+
+        // Left pane — a TreeView of a fake project.
+        let leftPane: Element = Element.Stack()
+            .AddChild(Element.Heading("Project").Style("margin:0"))
+            .AddChild(Element.TreeView()
+                .AddChild(Element.TreeNode("src").Attr("open", "open")
+                    .AddChild(Element.TreeLeaf("main.am"))
+                    .AddChild(Element.TreeLeaf("utils.am")))
+                .AddChild(Element.TreeNode("docs")
+                    .AddChild(Element.TreeLeaf("README.md")))
+                .AddChild(Element.TreeLeaf("amalgame.toml")))
+
+        // ContextMenu for the right pane.
+        let ctxMenu: Element = Element.ContextMenu("editor-area")
+            .AddChild(Element.MenuOption("Cut",   "amc_ctx_cut"))
+            .AddChild(Element.MenuOption("Copy",  "amc_ctx_copy"))
+            .AddChild(Element.MenuOption("Paste", "amc_ctx_paste"))
+            .AddChild(Element.MenuSeparator())
+            .AddChild(Element.MenuOption("Select all", "amc_ctx_selall"))
+
+        // Right pane wrapped in a context-target div so the JS
+        // bridge knows where to anchor the ContextMenu.
+        let rightWithCtx: Element = Element.Div()
+            .Id("editor-area")
+            .Class("amc-ctx-target")
+            .Style("height:100%;display:flex;flex-direction:column;padding:8px;gap:6px")
+            .AddChild(ctxMenu)
+            .AddChild(rightPane)
+
+        // SplitContainer: 30% / 70% horizontal split.
+        let workspace: Element = Element.SplitContainer("row", 30)
+            .AddChild(leftPane.Style("padding:8px"))
+            .AddChild(rightWithCtx)
+
+        // Top menubar.
+        let menubar: Element = Element.MenuBar()
+            .AddChild(Element.MenuItem("File")
+                .AddChild(Element.MenuOption("New",    "amc_menu_new"))
+                .AddChild(Element.MenuOption("Open…",  "amc_menu_open"))
+                .AddChild(Element.MenuOption("Save…",  "amc_menu_save"))
+                .AddChild(Element.MenuSeparator())
+                .AddChild(Element.MenuOption("Quit",   "amc_menu_quit")))
+            .AddChild(Element.MenuItem("Edit")
+                .AddChild(Element.MenuOption("Undo",   "amc_menu_undo"))
+                .AddChild(Element.MenuOption("Redo",   "amc_menu_redo")))
+            .AddChild(Element.MenuItem("View")
+                .AddChild(Element.MenuOption("Reload", "amc_menu_reload")))
+
+        let body: Element = Element.Stack()
+            .Style("height:100%;gap:0")
+            .AddChild(menubar)
+            .AddChild(workspace.Fill())
+            .AddChild(Element.StatusStrip()
+                .AddChild(Element.Label("Ready"))
+                .AddChild(Element.Label("|"))
+                .AddChild(Element.Label("v0.0.8 spike")))
+
+        // Direct Window construction (not Form) so we can attach
+        // the menu / context-menu handlers via win.Bind. A future
+        // Form revision will expose .Window for post-load binding.
+        let win: Window = new Window("amalgame-ui-web v0.0.8 — IDE shell demo", 900, 600, true)
+        if (!win.IsValid()) { return }
+
+        let page: Page = Page.New().SetTitle("v0.0.8 spike").SetBody(body)
+
+        // Menu actions — File / Edit / View handlers.
+        win.Bind("amc_menu_new", (req: string) => {
+            win.SetInnerHtml("editor-status", "Created a new document")
+            return ""
+        })
+        win.Bind("amc_menu_open", (req: string) => {
+            Dialog.OpenFileContent(win, "", false, (payload: string) => {
+                if (String_Length(payload) == 0) {
+                    win.SetInnerHtml("editor-status", "(file open cancelled)")
+                    return ""
+                }
+                // payload = {"name":"...","content":"..."}
+                // For a v0.0.8 spike, just dump it raw.
+                win.SetInnerHtml("editor-status", "Opened — payload: " + payload)
+                return ""
+            })
+            return ""
+        })
+        win.Bind("amc_menu_save", (req: string) => {
+            Dialog.SaveFile(win, "notes.txt", "Sample content from v0.0.8 spike.", "text/plain", (r: string) => {
+                win.SetInnerHtml("editor-status", "Save dialog: " + r)
+                return ""
+            })
+            return ""
+        })
+        win.Bind("amc_menu_quit",   (req: string) => { win.Terminate() return "" })
+        win.Bind("amc_menu_undo",   (req: string) => { win.SetInnerHtml("editor-status", "Undo")    return "" })
+        win.Bind("amc_menu_redo",   (req: string) => { win.SetInnerHtml("editor-status", "Redo")    return "" })
+        win.Bind("amc_menu_reload", (req: string) => { win.SetInnerHtml("editor-status", "Reload")  return "" })
+
+        // Context menu actions.
+        win.Bind("amc_ctx_cut",    (req: string) => { win.SetInnerHtml("editor-status", "Context: Cut")        return "" })
+        win.Bind("amc_ctx_copy",   (req: string) => { win.SetInnerHtml("editor-status", "Context: Copy")       return "" })
+        win.Bind("amc_ctx_paste",  (req: string) => { win.SetInnerHtml("editor-status", "Context: Paste")      return "" })
+        win.Bind("amc_ctx_selall", (req: string) => { win.SetInnerHtml("editor-status", "Context: Select all") return "" })
+
+        page.ApplyTo(win)
+        win.Run()
+        win.Destroy()
+    }
+}
