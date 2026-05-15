@@ -41,6 +41,9 @@ for the per-release detail.
 | Form reading (auto-collect input state)     | ✓ v0.0.4 |
 | OS theme auto + baseline CSS + overrides    | ✓ v0.0.4 |
 | Declarative result routing (`OnResult`)     | ✓ v0.0.5 |
+| WinForms-aligned widget palette             | ✓ v0.0.5 |
+| Reactive change handler (`OnChange`)        | ✓ v0.0.5 |
+| Layout sugar (`Grid` / `Position`)          | ✓ v0.0.5 |
 | Native menubar / dialogs / tray             | ✗ — v0.1+ |
 | Multi-window (>1 simultaneous)              | Up to 4 slots, single-window recommended |
 | Custom URL scheme (`am://`)                 | ✗ — v0.1+ |
@@ -151,17 +154,39 @@ class WindowHint {
 class Element {
     Element Attr(k, v) / Id(s) / Class(s) / Style(s)
     Element AddChild(c: Element) / SetText(t: string)
+    Element Size(w, h) / Position(x, y)           // v0.0.5 — absolute placement
     Element OnClick(handler: Closure)
+    Element OnChange(handler: Closure)            // v0.0.5 — change/input
     Element OnResult(targetId: string)            // v0.0.5 — route return → #id
     Element Bind(name: string)                    // v0.0.4 — form key
 
+    // Layout
     static Element Stack() / Row() / Div()
-    static Element Heading(t) / Label(t) / Pre(t)
+    static Element Grid(rows, cols, gap)          // v0.0.5 — CSS Grid
+    static Element AbsoluteContainer()            // v0.0.5 — pos:relative
+
+    // Static text
+    static Element Heading(t) / Label(t) / Pre(t) / Link(text, url)
+
+    // Buttons + inputs
     static Element Button(t)
     static Element Input(name) / Textarea(name)   // v0.0.4
+    static Element Password(name)                 // v0.0.5
+    static Element Number(name, min, max, step)   // v0.0.5
+    static Element Slider(name, min, max, step)   // v0.0.5
+    static Element DatePicker(name)               // v0.0.5
+    static Element TimePicker(name)               // v0.0.5
+    static Element ColorPicker(name)              // v0.0.5
+
+    // Selection
     static Element Select(name) / Option(value, label)  // v0.0.4
+    static Element ListBox(name, size)            // v0.0.5 — multi-select
     static Element CheckBox(name)                 // v0.0.4
     static Element Radio(name, value)             // v0.0.4
+
+    // Display
+    static Element ProgressBar(value, max)        // v0.0.5
+    static Element Image(src)                     // v0.0.5
 }
 
 class Page {

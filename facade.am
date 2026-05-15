@@ -286,6 +286,8 @@ public class Element {
     public AttrVals:       List<string>
     public ClickFn:        Closure
     public HasClick:       bool
+    public ChangeFn:       Closure  // input/select/textarea change handler
+    public HasChange:      bool
     public StyleCss:       string   // cumulative inline style — see Style()
     public ResultTargetId: string   // when non-empty, OnClick's return is routed into this element id
 
@@ -296,6 +298,7 @@ public class Element {
         this.AttrKeys       = new List<string>()
         this.AttrVals       = new List<string>()
         this.HasClick       = false
+        this.HasChange      = false
         this.StyleCss       = ""
         this.ResultTargetId = ""
     }
@@ -355,6 +358,21 @@ public class Element {
         return this
     }
 
+    // Pin the element to absolute pixel coordinates relative to its
+    // nearest positioned ancestor (or the page if none). Equivalent
+    // to ui-forms' AbsoluteLayout — useful for legacy ports or
+    // diagram-style UIs. Combine with Size() for full x/y/w/h
+    // placement:
+    //
+    //   Element.Label("X").Position(40, 80).Size(120, 24)
+    //
+    // The CSS `position:absolute` only takes effect inside a parent
+    // with `position:relative|absolute|fixed`. Use a Stack/Row/Div
+    // ancestor with `.Style("position:relative")` to scope it.
+    public Element Position(x: int, y: int) {
+        return this.Style("position:absolute;left:" + String_FromInt(x) + "px;top:" + String_FromInt(y) + "px")
+    }
+
     // Wire a click handler. Page.Render() walks the tree and
     // allocates a JS-callable name `_amc_<n>` per OnClick; ApplyTo
     // then registers each via Window.Bind. The handler receives a
@@ -387,6 +405,28 @@ public class Element {
         return this
     }
 
+    // Wire a change handler. Fires on `change` for inputs / selects
+    // and on `input` for textareas — the union covers the cases
+    // ui-forms' OnChanged event covered (TextBox, CheckBox, Radio,
+    // ComboBox, ListBox). The handler receives the same JSON form
+    // payload as OnClick (auto-collected by __amc_collect), so you
+    // can read every named field — not just the one that changed —
+    // and react accordingly:
+    //
+    //   Element.Input("user").OnChange((req: string) => {
+    //       // req == {"user":"…","other":"…"}
+    //       …
+    //   })
+    //
+    // OnChange + OnClick are independent: a single element can
+    // carry both. Like OnClick, the handler's return is wired via
+    // OnResult(targetId) if set, otherwise discarded.
+    public Element OnChange(handler: Closure) {
+        this.ChangeFn  = handler
+        this.HasChange = true
+        return this
+    }
+
     // ── Static builders ────────────────────────────────────
 
     // Generic block container.
@@ -404,6 +444,33 @@ public class Element {
     public static Element Row() {
         let e: Element = new Element("div")
         return e.Style("display:flex;flex-direction:row;gap:8px;align-items:center")
+    }
+
+    // CSS Grid layout — equivalent to ui-forms' GridLayout. Children
+    // flow left-to-right, top-to-bottom into `rows` × `cols` cells.
+    // `gap` is the inter-cell spacing in pixels (use 0 for none).
+    // Pass 0 for `rows` to leave row count implicit — useful when
+    // you want a fixed-column grid with variable rows. Override
+    // individual cell placement on children via inline style
+    // (`.Style("grid-column:span 2")` etc.).
+    public static Element Grid(rows: int, cols: int, gap: int) {
+        let e: Element = new Element("div")
+        var s: string = "display:grid;grid-template-columns:repeat(" + String_FromInt(cols) + ",1fr)"
+        if (rows > 0) {
+            s = s + ";grid-template-rows:repeat(" + String_FromInt(rows) + ",auto)"
+        }
+        s = s + ";gap:" + String_FromInt(gap) + "px"
+        return e.Style(s)
+    }
+
+    // Absolutely-positioned container — equivalent to ui-forms'
+    // AbsoluteLayout. Children typically use `.Position(x, y)` to
+    // place themselves relative to this container; without
+    // `position:relative` here, absolute children would resolve
+    // against the document body instead.
+    public static Element AbsoluteContainer() {
+        let e: Element = new Element("div")
+        return e.Style("position:relative")
     }
 
     // Plain text paragraph.
@@ -476,6 +543,28 @@ public class Element {
         return e.Bind(name)
     }
 
+    // Multi-select listbox — equivalent to ui-forms' ListBox. Same
+    // structure as Select() (populate with Option children), but
+    // renders as an open scrolling list with multi-selection
+    // enabled. `size` is the visible row count (HTML `size`
+    // attribute); pass 0 to let the browser decide.
+    //
+    // Form payload note: <select multiple> doesn't emit a value in
+    // the default __amc_collect payload — when reading the
+    // selection you should attach an .OnChange handler that reads
+    // `document.getElementById(name).selectedOptions` from a
+    // companion JS snippet, or pass selected values manually via
+    // a hidden field. Auto-collect for multi-select is on the
+    // roadmap; see CHANGELOG.
+    public static Element ListBox(name: string, size: int) {
+        let e: Element = new Element("select")
+        e.Bind(name).Attr("multiple", "multiple")
+        if (size > 0) {
+            e.Attr("size", String_FromInt(size))
+        }
+        return e
+    }
+
     // <option> for use inside Element.Select(). `value` is what the
     // form payload reports; `label` is the visible text.
     public static Element Option(value: string, label: string) {
@@ -497,6 +586,103 @@ public class Element {
     public static Element Radio(name: string, value: string) {
         let e: Element = new Element("input")
         return e.Attr("type", "radio").Attr("value", value).Bind(name)
+    }
+
+    // ── WinForms-aligned widgets (v0.0.5) ─────────────────
+    //
+    // The webview-side equivalents of common .NET / WinForms /
+    // Visual-Studio toolbox controls. Each maps to a single HTML5
+    // input type or element; OS form widgets do the heavy lifting
+    // (native pickers, validation, accessibility).
+
+    // Masked text input — equivalent to WinForms' `TextBox` with
+    // `PasswordChar` set. Browsers show bullets and keep the value
+    // out of the DOM-visible HTML when the user pastes.
+    public static Element Password(name: string) {
+        let e: Element = new Element("input")
+        return e.Attr("type", "password").Bind(name)
+    }
+
+    // Numeric spinbox — equivalent to WinForms' `NumericUpDown`.
+    // The form payload reports a JSON number (not a string) when
+    // the input parses; an empty input becomes the empty string.
+    // `min` / `max` / `step` accept 0 to leave each unset.
+    public static Element Number(name: string, min: int, max: int, step: int) {
+        let e: Element = new Element("input")
+        e.Attr("type", "number").Bind(name)
+        if (min != 0 || max != 0) {
+            e.Attr("min", String_FromInt(min))
+            e.Attr("max", String_FromInt(max))
+        }
+        if (step > 0) {
+            e.Attr("step", String_FromInt(step))
+        }
+        return e
+    }
+
+    // Range slider — equivalent to WinForms' `TrackBar`. Form
+    // payload reports the numeric value as a string.
+    public static Element Slider(name: string, min: int, max: int, step: int) {
+        let e: Element = new Element("input")
+        e.Attr("type", "range").Bind(name)
+            .Attr("min", String_FromInt(min))
+            .Attr("max", String_FromInt(max))
+        if (step > 0) {
+            e.Attr("step", String_FromInt(step))
+        }
+        return e
+    }
+
+    // Native date picker — equivalent to WinForms' `DateTimePicker`
+    // (date-only). Form payload reports an ISO date string
+    // (`YYYY-MM-DD`).
+    public static Element DatePicker(name: string) {
+        let e: Element = new Element("input")
+        return e.Attr("type", "date").Bind(name)
+    }
+
+    // Native time picker. Form payload reports `HH:MM` (24-hour).
+    public static Element TimePicker(name: string) {
+        let e: Element = new Element("input")
+        return e.Attr("type", "time").Bind(name)
+    }
+
+    // Native color picker — equivalent to WinForms' `ColorDialog`
+    // exposed inline. Form payload reports `#RRGGBB`.
+    public static Element ColorPicker(name: string) {
+        let e: Element = new Element("input")
+        return e.Attr("type", "color").Bind(name)
+    }
+
+    // Read-only progress indicator — equivalent to WinForms'
+    // `ProgressBar`. `max` defaults to 100 when 0; pass a negative
+    // value to render an indeterminate bar.
+    public static Element ProgressBar(value: int, max: int) {
+        let e: Element = new Element("progress")
+        if (value >= 0) {
+            e.Attr("value", String_FromInt(value))
+        }
+        if (max > 0) {
+            e.Attr("max", String_FromInt(max))
+        }
+        return e
+    }
+
+    // Inline image. `src` accepts a `file://` URL (local asset),
+    // an `https://` URL, or a `data:image/...` URL.
+    public static Element Image(src: string) {
+        let e: Element = new Element("img")
+        return e.Attr("src", src)
+    }
+
+    // Hyperlink — equivalent to WinForms' `LinkLabel`. By default
+    // opens the URL in the user's browser (the webview's native
+    // anchor handling). For in-app navigation, attach an
+    // .OnClick handler and call `e.preventDefault()` from JS or
+    // return `false` from the bound handler.
+    public static Element Link(text: string, url: string) {
+        let e: Element = new Element("a")
+        return e.Attr("href", url).SetText(text)
     }
 }
 
@@ -745,6 +931,29 @@ public class Page {
                 s = s + " onclick=\"window.__amc_route(" + call + "," + idLit + ")\""
             } else {
                 s = s + " onclick=\"" + call + "\""
+            }
+        }
+        if (e.HasChange) {
+            this.Counter = this.Counter + 1
+            let cname: string = "_amc_" + String_FromInt(this.Counter)
+            this.BindNames.Add(cname)
+            this.BindHandlers.Add(e.ChangeFn)
+            // Same form-state payload as onclick. We hook both
+            // `onchange` (fires on commit — selects, radios,
+            // checkboxes, blur for text inputs) and `oninput`
+            // (fires on every keystroke — necessary for textareas
+            // and live validation). The two are deduped by routing
+            // through the same bound name; handlers see one call
+            // per logical change.
+            let call: string = "window." + cname + "(JSON.stringify(window.__amc_collect()))"
+            var attrs: string = call
+            if (String_Length(e.ResultTargetId) > 0) {
+                let idLit: string = Html.Escape(Json.EncodeString(e.ResultTargetId))
+                attrs = "window.__amc_route(" + call + "," + idLit + ")"
+            }
+            s = s + " onchange=\"" + attrs + "\""
+            if (e.Tag == "textarea" || e.Tag == "input") {
+                s = s + " oninput=\"" + attrs + "\""
             }
         }
         s = s + ">"
