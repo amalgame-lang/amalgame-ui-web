@@ -97,6 +97,13 @@ All notable changes to `amalgame-ui-web` are recorded here.
 - **Textarea `resize: none`** in the baseline — the drag-grip
   destabilizes declarative layouts. Re-enable per-element via
   `.Style("resize:vertical")` when needed.
+- **Body `user-select: none`** in the baseline so labels,
+  headings, and buttons can't be highlighted with a cursor drag
+  — matches the default behavior of native desktop apps and
+  Tauri/Electron. Selection is re-enabled on `input`, `select`,
+  `textarea`, and `pre` so form fields stay editable and code
+  / output panels stay copy-friendly. Re-enable on a specific
+  element via `.Style("user-select:text")`.
 
 ### Breaking
 
