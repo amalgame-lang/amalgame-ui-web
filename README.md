@@ -21,25 +21,28 @@ OS webview. See [`docs/proposals/amalgame-ui-web.md`](../Amalgame/docs/proposals
 in the main Amalgame repo for the full design rationale (industry
 survey, alternatives evaluated, v1→v2 migration guarantee).
 
-## v0.0.1-dev scope
+## Scope
 
-Single-window apps with HTML UI, JS injection, and event-loop
-control. Sufficient for forms, dashboards, viewers, internal tools
-— roughly 80% of "productive" desktop apps.
+Single-window apps with HTML UI, JS injection, declarative IPC,
+and an AM-side HTML builder with form-reading. Sufficient for
+forms, dashboards, viewers, internal tools — roughly 80% of
+"productive" desktop apps. See [`CHANGELOG.md`](CHANGELOG.md)
+for the per-release detail.
 
-| Capability                                 | Status |
+| Capability                                  | Status |
 |---------------------------------------------|--------|
-| Native window with OS titlebar              | ✓     |
-| Configurable size, title                    | ✓     |
-| Load URL (`http`, `https`, `file`, `data`)  | ✓     |
-| Load HTML directly                          | ✓     |
-| Inject JS before page load                  | ✓     |
-| Eval JS at runtime                          | ✓     |
-| DevTools (debug mode)                       | ✓     |
-| IPC: Amalgame ← JS (`webview_bind`)         | ✗ — v0.0.2 |
-| Native menubar / dialogs / tray             | ✗ — v0.10+ |
+| Native window with OS titlebar              | ✓ v0.0.1 |
+| Configurable size, title                    | ✓ v0.0.1 |
+| Load URL / HTML                             | ✓ v0.0.1 |
+| Inject / Eval JS                            | ✓ v0.0.1 |
+| DevTools (debug mode)                       | ✓ v0.0.1 |
+| IPC: Amalgame ← JS (`Window.Bind`)          | ✓ v0.0.2 |
+| HTML builder API (`Element` / `Page`)       | ✓ v0.0.3 |
+| Form reading (auto-collect input state)     | ✓ v0.0.4 |
+| OS theme auto + baseline CSS + overrides    | ✓ v0.0.4 |
+| Native menubar / dialogs / tray             | ✗ — v0.1+ |
 | Multi-window (>1 simultaneous)              | Up to 4 slots, single-window recommended |
-| Custom URL scheme (`am://`)                 | ✗ — v0.10+ |
+| Custom URL scheme (`am://`)                 | ✗ — v0.1+ |
 
 ## Install
 
@@ -115,9 +118,11 @@ Or load a local file:
 w.Navigate("file:///" + Cwd() + "/ui/index.html")
 ```
 
-A complete smoke test lives in [`tests/spike.am`](tests/spike.am).
+Smoke tests live in [`tests/`](tests/) — `spike.am` (window MVP),
+`spike_bind.am` (IPC), `spike_builder.am` (Element/Page),
+`spike_form.am` (form reading).
 
-## API surface (v0.0.1)
+## API surface
 
 ```amalgame
 class Window {
@@ -133,17 +138,99 @@ class Window {
     void   Run()                        // blocks on event loop
     void   Terminate()
     void   Destroy()
+    void   Bind(name: string, handler: Closure)   // v0.0.2 — JS → AM
+    void   Unbind(name: string)
 }
 
 class WindowHint {
     static int None() / Min() / Max() / Fixed()
 }
+
+// v0.0.3+ HTML builder
+class Element {
+    Element Attr(k, v) / Id(s) / Class(s) / Style(s)
+    Element AddChild(c: Element) / SetText(t: string)
+    Element OnClick(handler: Closure)
+    Element Bind(name: string)                    // v0.0.4 — form key
+
+    static Element Stack() / Row() / Div()
+    static Element Heading(t) / Label(t) / Pre(t)
+    static Element Button(t)
+    static Element Input(name) / Textarea(name)   // v0.0.4
+    static Element Select(name) / Option(value, label)  // v0.0.4
+    static Element CheckBox(name)                 // v0.0.4
+    static Element Radio(name, value)             // v0.0.4
+}
+
+class Page {
+    static Page New()
+    Page SetTitle(t: string) / SetBody(e: Element)
+    Page SetStylesheet(url: string)               // v0.0.4 — replace baseline
+    Page AddCss(url: string)                      // v0.0.4 — layer on top
+    Page NoBaseline()                             // v0.0.4 — disable baseline
+    Page SetTheme(mode: string)                   // v0.0.4 — "auto" | "light" | "dark"
+    string EffectiveTheme()                       // v0.0.4 — resolved "light" or "dark"
+    string Render()
+    void   ApplyTo(win: Window)
+    static string BaselineCss()                   // v0.0.4 — exposed for inspection
+    static string DetectOSTheme()                 // v0.0.4 — "light" or "dark"
+}
 ```
 
-The API was designed forward-compatible with v0.10+ additions —
+The API is designed forward-compatible with v0.1+ additions —
 existing app code will *not* break when native menus, dialogs,
 tray, multi-window, custom URL schemes, and typed IPC land. See
-the proposal in the main Amalgame repo for the full v2 surface.
+the proposal in the main Amalgame repo for the full v1 surface.
+
+## Theming (v0.0.4)
+
+`Page.Render` ships a baseline stylesheet by default. The baseline
+exposes seven CSS variables you can override from your own
+stylesheet without re-authoring the whole rule set:
+
+| Variable          | Light default | Dark default | Used by                       |
+|-------------------|---------------|--------------|-------------------------------|
+| `--amc-bg`        | `#fff`        | `#1e1e1e`    | body background, inputs       |
+| `--amc-fg`        | `#1a1a1a`     | `#e8e8e8`    | body text, all controls       |
+| `--amc-muted`     | `#6a6a6a`     | `#9a9a9a`    | secondary text (reserved)     |
+| `--amc-border`    | `#d0d0d0`     | `#404040`    | input / button borders        |
+| `--amc-surface`   | `#f5f5f5`     | `#2a2a2a`    | button bg, pre bg             |
+| `--amc-accent`    | `#0066cc`     | `#4a9eff`    | focus outline (reserved)      |
+| `--amc-radius`    | `4px`         | `4px`        | input / button border-radius  |
+
+The dark variant keys off `[data-theme=dark]` on `<html>`, which
+`Page.Render` writes from the OS theme detection (`gsettings`
+on Linux, `defaults` on macOS, registry on Windows). A secondary
+`@media (prefers-color-scheme: dark)` fallback applies when
+the caller bypasses `Render` and ships raw HTML.
+
+On Linux specifically, dark mode also flips
+`GtkSettings::gtk-application-prefer-dark-theme` at window
+creation so the native `<select>` popup, scrollbars, and file
+dialogs (rendered by GTK, not the webview) match the page theme.
+Override with `Page.SetTheme("light"|"dark")` or by exporting
+`AMALGAME_UI_THEME=dark` before launch.
+
+Override an individual variable from a custom stylesheet:
+
+```css
+:root { --amc-accent: #ff6b00 }
+```
+
+Three ways to bring your own styles:
+
+```amalgame
+// Baseline + your overrides layered on top
+Page.New().AddCss("file:///abs/app/overrides.css")
+
+// Skip the baseline, ship your own complete stylesheet
+Page.New().SetStylesheet("file:///abs/app/style.css")
+
+// Skip the baseline, layer multiple stylesheets
+Page.New().NoBaseline()
+    .AddCss("https://unpkg.com/@picocss/pico@2/css/pico.min.css")
+    .AddCss("file:///abs/app/app.css")
+```
 
 ## Architecture
 

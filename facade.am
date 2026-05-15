@@ -286,6 +286,7 @@ public class Element {
     public AttrVals:   List<string>
     public ClickFn:    Closure
     public HasClick:   bool
+    public StyleCss:   string   // cumulative inline style — see Style()
 
     public Element(tag: string) {
         this.Tag      = tag
@@ -294,6 +295,7 @@ public class Element {
         this.AttrKeys = new List<string>()
         this.AttrVals = new List<string>()
         this.HasClick = false
+        this.StyleCss = ""
     }
 
     public Element SetText(t: string) {
@@ -306,7 +308,13 @@ public class Element {
         return this
     }
 
+    // Set an HTML attribute. The `style` name is special-cased so
+    // it routes through Style() and accumulates instead of producing
+    // duplicate attributes that HTML5 parsers silently drop.
     public Element Attr(name: string, value: string) {
+        if (name == "style") {
+            return this.Style(value)
+        }
         this.AttrKeys.Add(name)
         this.AttrVals.Add(value)
         return this
@@ -314,7 +322,36 @@ public class Element {
 
     public Element Id(id: string)     { return this.Attr("id", id) }
     public Element Class(cls: string) { return this.Attr("class", cls) }
-    public Element Style(s: string)   { return this.Attr("style", s) }
+
+    // Append a CSS declaration block to the element's inline style.
+    // Multiple calls layer in declaration order; later declarations
+    // win per the CSS cascade, so `.Style("color:red").Style("color:blue")`
+    // resolves to blue. Use this for one-off tweaks; for reusable
+    // theming attach a class via Class() and style it from a sheet.
+    public Element Style(s: string) {
+        if (String_Length(s) == 0) {
+            return this
+        }
+        if (String_Length(this.StyleCss) > 0) {
+            this.StyleCss = this.StyleCss + ";"
+        }
+        this.StyleCss = this.StyleCss + s
+        return this
+    }
+
+    // Force the element to a fixed pixel size. Pass 0 on either
+    // axis to leave it untouched — `Size(0, 120)` only sets height,
+    // useful for sizing a Textarea / Pre while letting the parent
+    // flex layout drive width.
+    public Element Size(width: int, height: int) {
+        if (width > 0) {
+            this.Style("width:" + String_FromInt(width) + "px")
+        }
+        if (height > 0) {
+            this.Style("height:" + String_FromInt(height) + "px")
+        }
+        return this
+    }
 
     // Wire a click handler. Page.Render() walks the tree and
     // allocates a JS-callable name `_amc_<n>` per OnClick; ApplyTo
@@ -365,18 +402,78 @@ public class Element {
         return e.SetText(text)
     }
 
-    // Single-line text input. `name` is the HTML `name` attribute
-    // and the conventional way for callers to read the value back
-    // (e.g. via a form-style Bind handler reading req JSON).
+    // Single-line text input. `name` is the HTML `name` attribute —
+    // any element with a name is picked up by the auto-bridge so
+    // its value reaches OnClick handlers via the `req` JSON object.
     public static Element Input(name: string) {
         let e: Element = new Element("input")
-        return e.Attr("name", name).Attr("type", "text")
+        return e.Attr("type", "text").Bind(name)
     }
 
     // <pre> for monospace output panels.
     public static Element Pre(text: string) {
         let e: Element = new Element("pre")
         return e.SetText(text)
+    }
+
+    // ── Form-field builders (v0.0.4) ──────────────────────
+    //
+    // Every element with a `name` attribute is auto-collected by
+    // Page.ApplyTo's injected bridge. When an OnClick fires, the
+    // handler receives `req` as a JSON object whose keys are these
+    // names. Example:
+    //
+    //   Element.Stack()
+    //     .AddChild(Element.Input("user"))
+    //     .AddChild(Element.CheckBox("newsletter"))
+    //     .AddChild(Element.Button("Submit")
+    //       .OnClick((req: string) => req))
+    //
+    // Clicking the button delivers
+    //   req == "{\"user\":\"alice\",\"newsletter\":true}"
+
+    // Declarative form-key for any element. Equivalent to
+    // `.Attr("name", name)` but reads more clearly at call sites
+    // that build inputs from raw `new Element(...)`.
+    public Element Bind(name: string) {
+        return this.Attr("name", name)
+    }
+
+    // Multi-line text input. Size with `.Style("min-height:80px")`
+    // or set rows/cols via `.Attr`.
+    public static Element Textarea(name: string) {
+        let e: Element = new Element("textarea")
+        return e.Bind(name)
+    }
+
+    // <select> dropdown. Populate with `.AddChild(Element.Option(...))`.
+    // The form payload reports the `value` of the selected option.
+    public static Element Select(name: string) {
+        let e: Element = new Element("select")
+        return e.Bind(name)
+    }
+
+    // <option> for use inside Element.Select(). `value` is what the
+    // form payload reports; `label` is the visible text.
+    public static Element Option(value: string, label: string) {
+        let e: Element = new Element("option")
+        return e.Attr("value", value).SetText(label)
+    }
+
+    // Boolean checkbox. The form payload reports `true`/`false`
+    // (not the HTML default `"on"`/missing) so handlers can branch
+    // directly on the parsed JSON.
+    public static Element CheckBox(name: string) {
+        let e: Element = new Element("input")
+        return e.Attr("type", "checkbox").Bind(name)
+    }
+
+    // Single-choice radio button. Multiple Radio elements sharing
+    // the same `name` form a group; the form payload reports the
+    // `value` of the selected one (key absent if none is checked).
+    public static Element Radio(name: string, value: string) {
+        let e: Element = new Element("input")
+        return e.Attr("type", "radio").Attr("value", value).Bind(name)
     }
 }
 
@@ -392,18 +489,28 @@ public class Element {
 // or the JS side will accumulate dead listeners.
 
 public class Page {
-    public Title:        string
-    public Body:         Element
-    public BindNames:    List<string>
-    public BindHandlers: List<Closure>
-    public Counter:      int
+    public Title:          string
+    public Body:           Element
+    public BindNames:      List<string>
+    public BindHandlers:   List<Closure>
+    public Counter:        int
+    public StylesheetUrl:  string         // primary stylesheet override
+    public ExtraCss:       List<string>   // extra stylesheets appended after the baseline
+    public UseBaseline:    bool           // inject the baseline <style> in <head>?
+    public ThemeMode:      string         // "auto" | "light" | "dark" (controls <html data-theme>)
+    public LockChrome:     bool           // block right-click menu + F5/Ctrl+R/Cmd+R reloads?
 
     public Page() {
-        this.Title        = ""
-        this.Body         = new Element("div")
-        this.BindNames    = new List<string>()
-        this.BindHandlers = new List<Closure>()
-        this.Counter      = 0
+        this.Title          = ""
+        this.Body           = new Element("div")
+        this.BindNames      = new List<string>()
+        this.BindHandlers   = new List<Closure>()
+        this.Counter        = 0
+        this.StylesheetUrl  = ""
+        this.ExtraCss       = new List<string>()
+        this.UseBaseline    = true
+        this.ThemeMode      = "auto"
+        this.LockChrome     = true
     }
 
     public static Page New() {
@@ -420,18 +527,164 @@ public class Page {
         return this
     }
 
+    // Use a single external stylesheet *instead of* the baseline.
+    // Pass a URL — `file:///abs/path/style.css`, `https://…`, or a
+    // `data:text/css,…` data URL all work. Disables the baseline
+    // implicitly; call .AddCss() if you want a stack of stylesheets.
+    public Page SetStylesheet(url: string) {
+        this.StylesheetUrl = url
+        this.UseBaseline   = false
+        return this
+    }
+
+    // Add a stylesheet on top of whatever is already there. Multiple
+    // calls layer in declaration order, after the baseline.
+    public Page AddCss(url: string) {
+        this.ExtraCss.Add(url)
+        return this
+    }
+
+    // Disable the baseline stylesheet entirely. Use when shipping a
+    // CSS reset / framework (Tailwind, Pico, custom) that starts
+    // from a blank slate.
+    public Page NoBaseline() {
+        this.UseBaseline = false
+        return this
+    }
+
+    // Force the page theme regardless of the OS preference. Accepts
+    // "auto" (default — defers to Page.DetectOSTheme), "light", or
+    // "dark". The resolved value is written as `<html data-theme>`
+    // at render time so the baseline `[data-theme=dark]` rules can
+    // key off it. Custom stylesheets can do the same.
+    public Page SetTheme(mode: string) {
+        this.ThemeMode = mode
+        return this
+    }
+
+    // Detect the OS color scheme. Returns "light" or "dark". Order:
+    //   1. `AMALGAME_UI_THEME` env var (explicit override)
+    //   2. macOS `defaults read -g AppleInterfaceStyle`
+    //   3. Windows `AppsUseLightTheme` registry DWORD
+    //   4. Linux `gsettings ... color-scheme` (GNOME 42+)
+    //   5. Linux `GTK_THEME` containing `:dark`
+    //   6. Defaults to "light" if no signal.
+    public static string DetectOSTheme() {
+        var r: string = "light"
+        @c {
+            const char* p = Amalgame_UI_Web_DetectOSTheme();
+            r = (code_string)(p ? p : "light");
+        }
+        return r
+    }
+
+    // Re-enable the webview's native context menu and the reload
+    // hotkeys (F5, Ctrl+R / Cmd+R, Ctrl+Shift+R / Cmd+Shift+R).
+    // OFF by default because Page.ApplyTo loads the document via
+    // Window.SetHtml — there is no underlying URL to reload to, so
+    // a right-click → Reload leaves the user staring at a blank
+    // page until the app is restarted. Apps that navigate to real
+    // URLs (Window.Navigate) and want the standard browser chrome
+    // can opt back in:
+    //
+    //   Page.New().AllowBrowserDefaults() ...
+    public Page AllowBrowserDefaults() {
+        this.LockChrome = false
+        return this
+    }
+
+    // Resolve the effective theme for this render. "auto" defers to
+    // Page.DetectOSTheme; "light"/"dark" pass through verbatim;
+    // anything else is treated as "auto" so callers can't accidentally
+    // emit garbage into the data-theme attribute.
+    public string EffectiveTheme() {
+        if (this.ThemeMode == "light") {
+            return "light"
+        }
+        if (this.ThemeMode == "dark") {
+            return "dark"
+        }
+        return Page.DetectOSTheme()
+    }
+
+    // The baseline stylesheet — a tiny modern reset + system fonts
+    // + form widget polish, themed via CSS variables that flip on
+    // `[data-theme=dark]` (set by Page.Render from the OS theme).
+    //
+    // We use the attribute selector rather than
+    // `prefers-color-scheme` because WebKitGTK does not propagate
+    // GNOME/KDE's color scheme to the embedded page. By detecting
+    // the OS theme ourselves and writing `data-theme` on `<html>`,
+    // light/dark works consistently across WebView2, WKWebView, and
+    // WebKitGTK. `prefers-color-scheme` is kept as a secondary
+    // fallback for cases where the user bypasses Page.Render and
+    // ships their own raw HTML.
+    //
+    // Override individual variables in your own stylesheet rather
+    // than rewriting the whole rule set:
+    //
+    //     :root { --amc-accent: #ff6b00 }
+    //
+    // Variables surface: --amc-bg, --amc-fg, --amc-muted,
+    // --amc-border, --amc-surface, --amc-accent, --amc-radius.
+    public static string BaselineCss() {
+        var c: string = ":root{--amc-bg:#fff;--amc-fg:#1a1a1a;--amc-muted:#6a6a6a;--amc-border:#d0d0d0;--amc-surface:#f5f5f5;--amc-accent:#0066cc;--amc-radius:4px;color-scheme:light}"
+        c = c + "[data-theme=dark]{--amc-bg:#1e1e1e;--amc-fg:#e8e8e8;--amc-muted:#9a9a9a;--amc-border:#404040;--amc-surface:#2a2a2a;--amc-accent:#4a9eff;color-scheme:dark}"
+        c = c + "@media(prefers-color-scheme:dark){:root:not([data-theme=light]){--amc-bg:#1e1e1e;--amc-fg:#e8e8e8;--amc-muted:#9a9a9a;--amc-border:#404040;--amc-surface:#2a2a2a;--amc-accent:#4a9eff;color-scheme:dark}}"
+        c = c + "*{box-sizing:border-box}"
+        c = c + "body{margin:0;padding:16px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:14px;line-height:1.5;color:var(--amc-fg);background:var(--amc-bg);-webkit-user-select:none;user-select:none}"
+        c = c + "input,select,textarea,pre{-webkit-user-select:text;user-select:text}"
+        c = c + "h1,h2,h3{margin:0 0 8px}p{margin:0 0 8px}"
+        c = c + "button{padding:6px 12px;border:1px solid var(--amc-border);border-radius:var(--amc-radius);background:var(--amc-surface);color:var(--amc-fg);cursor:pointer;font:inherit}"
+        c = c + "button:hover{background:var(--amc-border)}"
+        c = c + "input,select,textarea{padding:6px 8px;border:1px solid var(--amc-border);border-radius:var(--amc-radius);background:var(--amc-bg);color:var(--amc-fg);font:inherit}"
+        c = c + "textarea{resize:none}"
+        c = c + "input:focus,select:focus,textarea:focus{outline:2px solid var(--amc-accent);outline-offset:-1px}"
+        c = c + "pre{padding:8px;background:var(--amc-surface);border-radius:var(--amc-radius);overflow:auto;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--amc-fg)}"
+        return c
+    }
+
     // Render the page to a complete HTML document and accumulate
-    // bindings for every OnClick handler in the tree.
+    // bindings for every OnClick handler in the tree. The opening
+    // `<html>` carries a `data-theme="dark|light"` attribute so
+    // baseline rules (and any user CSS that respects the same
+    // attribute) can theme the document without depending on
+    // `prefers-color-scheme` — useful since WebKitGTK doesn't
+    // propagate the OS color scheme to the page.
     public string Render() {
         this.BindNames    = new List<string>()
         this.BindHandlers = new List<Closure>()
         this.Counter      = 0
-        var html: string = "<!DOCTYPE html><html><head><meta charset=utf-8>"
+        let theme: string = this.EffectiveTheme()
+        var html: string = "<!DOCTYPE html><html data-theme=\"" + Html.Escape(theme) + "\"><head><meta charset=utf-8>"
+        html = html + "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
         html = html + "<title>" + Html.Escape(this.Title) + "</title>"
+        if (this.UseBaseline) {
+            html = html + "<style>" + Page.BaselineCss() + "</style>"
+        }
+        if (String_Length(this.StylesheetUrl) > 0) {
+            html = html + "<link rel=\"stylesheet\" href=\"" + Html.Escape(this.StylesheetUrl) + "\">"
+        }
+        let nx: int = this.ExtraCss.Count()
+        for i in 0..nx {
+            html = html + "<link rel=\"stylesheet\" href=\"" + Html.Escape(this.ExtraCss.Get(i)) + "\">"
+        }
         html = html + "</head><body>"
         html = html + this.RenderElement(this.Body)
         html = html + "</body></html>"
         return html
+    }
+
+    // HTML void elements — no closing tag, no children. Browsers
+    // tolerate `</input>` but it parses as a stray end-tag error
+    // and bloats the document; emit `<input ...>` for these.
+    public static bool IsVoidTag(tag: string) {
+        return tag == "input"
+            || tag == "br"
+            || tag == "hr"
+            || tag == "img"
+            || tag == "meta"
+            || tag == "link"
     }
 
     // Walk one element. Recursive — children render inside.
@@ -443,14 +696,23 @@ public class Page {
             let v: string = e.AttrVals.Get(i)
             s = s + " " + k + "=\"" + Html.Escape(v) + "\""
         }
+        if (String_Length(e.StyleCss) > 0) {
+            s = s + " style=\"" + Html.Escape(e.StyleCss) + "\""
+        }
         if (e.HasClick) {
             this.Counter = this.Counter + 1
             let bname: string = "_amc_" + String_FromInt(this.Counter)
             this.BindNames.Add(bname)
             this.BindHandlers.Add(e.ClickFn)
-            s = s + " onclick=\"window." + bname + "()\""
+            // Pass JSON-stringified form state to every handler so
+            // the AM side reads inputs declaratively — see the
+            // window.__amc_collect bridge injected by ApplyTo.
+            s = s + " onclick=\"window." + bname + "(JSON.stringify(window.__amc_collect()))\""
         }
         s = s + ">"
+        if (Page.IsVoidTag(e.Tag)) {
+            return s
+        }
         if (String_Length(e.Text) > 0) {
             s = s + Html.Escape(e.Text)
         }
@@ -462,9 +724,34 @@ public class Page {
         return s
     }
 
-    // Push the page into a window. Sets HTML, registers each
-    // OnClick handler via Window.Bind.
+    // Push the page into a window. Injects the form-collect bridge
+    // (and the chrome-lockdown guard unless AllowBrowserDefaults()
+    // was called), sets the HTML, then registers each OnClick
+    // handler via Window.Bind.
+    //
+    // The form bridge (`window.__amc_collect`) walks every input/
+    // select/textarea with a `name` attribute and returns a plain
+    // object whose keys are the names and values are the field
+    // values (booleans for checkboxes; selected `value` for radio
+    // groups). Each OnClick onclick attribute stringifies that
+    // object and passes it as the single argument to the bound
+    // handler.
+    //
+    // The chrome guard blocks the webview's native context menu and
+    // the reload hotkeys (F5, Ctrl+R, Cmd+R, plus the shifted hard-
+    // reload variants). Reasons:
+    //   - The page is loaded via SetHtml, not a URL — reloading
+    //     ends up at about:blank and the app is stuck.
+    //   - Most productive desktop apps (VS Code, Slack, Tauri
+    //     defaults) hide the native browser chrome for the same
+    //     reason.
     public void ApplyTo(win: Window) {
+        var initJs: string = "window.__amc_collect=function(){var o={};document.querySelectorAll('input[name],select[name],textarea[name]').forEach(function(el){var n=el.getAttribute('name');if(el.type==='checkbox'){o[n]=el.checked;}else if(el.type==='radio'){if(el.checked){o[n]=el.value;}}else{o[n]=el.value;}});return o;};"
+        if (this.LockChrome) {
+            initJs = initJs + "document.addEventListener('contextmenu',function(e){e.preventDefault();},true);"
+            initJs = initJs + "document.addEventListener('keydown',function(e){var k=e.key;var m=e.ctrlKey||e.metaKey;if(k==='F5'){e.preventDefault();return;}if(m&&(k==='r'||k==='R')){e.preventDefault();return;}},true);"
+        }
+        win.Init(initJs)
         let html: string = this.Render()
         win.SetHtml(html)
         let n: int = this.BindNames.Count()

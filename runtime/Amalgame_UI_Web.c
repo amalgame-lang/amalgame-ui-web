@@ -15,6 +15,24 @@
 #include "Amalgame_UI_Web.h"
 #include "vendor/webview/webview.h"
 
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
+/* On Linux/BSD we want to flip the host GTK app to dark mode when the
+ * OS is in dark mode — WebKitGTK renders <select> popups, native file
+ * dialogs, and scrollbars through GTK, and these widgets ignore the
+ * CSS `color-scheme: dark` declaration. The CSS path handles the
+ * webview content; this handles the chrome around it. */
+#if defined(__linux__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)
+#include <gtk/gtk.h>
+#define _AMALGAME_UI_WEB_HAVE_GTK 1
+#endif
+
 /* Slot table. NULL = free slot. Indexed by the int handle exposed
  * to Amalgame. v0.0.1 supports up to AMALGAME_UI_WEB_MAX_WINDOWS
  * simultaneous webviews — usually one is enough for productive
@@ -36,6 +54,24 @@ int Amalgame_UI_Web_Create(int debug) {
     webview_t w = webview_create(debug ? 1 : 0, NULL);
     if (!w) return -1;
     _amalgame_uiweb_slots[slot] = w;
+#ifdef _AMALGAME_UI_WEB_HAVE_GTK
+    /* Flip GtkSettings::gtk-application-prefer-dark-theme when the OS
+     * is in dark mode so <select> popups and other GTK-rendered chrome
+     * match. Safe to call after webview_create — webview_create has
+     * already invoked gtk_init internally. We only touch this setting
+     * for the first window created; subsequent webview_create calls
+     * inherit the same GtkSettings singleton. */
+    if (slot == 0) {
+        const char* theme = Amalgame_UI_Web_DetectOSTheme();
+        if (theme && strcmp(theme, "dark") == 0) {
+            GtkSettings* s = gtk_settings_get_default();
+            if (s) {
+                g_object_set(s, "gtk-application-prefer-dark-theme",
+                             (gboolean)TRUE, NULL);
+            }
+        }
+    }
+#endif
     return slot;
 }
 
@@ -203,4 +239,73 @@ int Amalgame_UI_Web_Return(int slot, const char* seq, int status,
     webview_t w = _slot_get(slot);
     if (!w || !seq) return 1;
     return webview_return(w, seq, status, result ? result : "");
+}
+
+/* ─── v0.0.4 — OS theme detection ─────────────────────────
+ *
+ * Why this lives here rather than relying on the CSS
+ * `@media (prefers-color-scheme: dark)` query: WebKitGTK does
+ * not propagate the GNOME/KDE color-scheme to the embedded
+ * page automatically. So we read the OS preference here and
+ * AM emits `<html data-theme="dark">` on render, which the
+ * baseline stylesheet keys off via attribute selectors.
+ *
+ * WebView2 and WKWebView do honor prefers-color-scheme — but
+ * the data-theme path stays the canonical control surface
+ * across all three platforms for consistency. */
+
+const char* Amalgame_UI_Web_DetectOSTheme(void) {
+    /* 0. Explicit env override wins. */
+    const char* env = getenv("AMALGAME_UI_THEME");
+    if (env) {
+        if (strcmp(env, "dark") == 0)  return "dark";
+        if (strcmp(env, "light") == 0) return "light";
+    }
+
+#if defined(__APPLE__)
+    /* macOS: `defaults read -g AppleInterfaceStyle` prints `Dark`
+     * (with a trailing newline) when dark mode is on; errors and
+     * prints nothing otherwise. */
+    FILE* p = popen("defaults read -g AppleInterfaceStyle 2>/dev/null", "r");
+    if (p) {
+        char buf[32] = {0};
+        char* got = fgets(buf, sizeof(buf), p);
+        pclose(p);
+        if (got && strncmp(buf, "Dark", 4) == 0) return "dark";
+    }
+    return "light";
+#elif defined(_WIN32)
+    /* Windows: HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\
+     *          Personalize\AppsUseLightTheme → DWORD (0 = dark, 1 = light). */
+    HKEY key;
+    DWORD val = 1;
+    DWORD size = sizeof(val);
+    if (RegOpenKeyExA(HKEY_CURRENT_USER,
+                      "Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+                      0, KEY_READ, &key) == ERROR_SUCCESS) {
+        RegQueryValueExA(key, "AppsUseLightTheme", NULL, NULL,
+                         (LPBYTE)&val, &size);
+        RegCloseKey(key);
+    }
+    return (val == 0) ? "dark" : "light";
+#else
+    /* Linux: prefer `gsettings get org.gnome.desktop.interface
+     * color-scheme` (GNOME 42+) — value is one of `'default'`,
+     * `'prefer-dark'`, `'prefer-light'` (single-quoted). Falls
+     * back to GTK_THEME containing `:dark`. */
+    FILE* p = popen("gsettings get org.gnome.desktop.interface color-scheme 2>/dev/null", "r");
+    if (p) {
+        char buf[64] = {0};
+        char* got = fgets(buf, sizeof(buf), p);
+        pclose(p);
+        if (got) {
+            if (strstr(buf, "prefer-dark"))  return "dark";
+            if (strstr(buf, "prefer-light")) return "light";
+        }
+    }
+    const char* gtk = getenv("GTK_THEME");
+    if (gtk && strstr(gtk, ":dark")) return "dark";
+    /* Older GNOME / KDE / minimal WMs — default to light. */
+    return "light";
+#endif
 }
