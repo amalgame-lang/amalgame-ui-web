@@ -1,16 +1,19 @@
 import Amalgame.UI.Web
 
-// Spike for amalgame-ui-web v0.0.4 — form reading via Element.Bind.
+// Spike for amalgame-ui-web v0.0.5 — declarative result routing
+// via Element.OnResult.
 //
-// Demonstrates the new form-field builders (Textarea, Select,
-// CheckBox, Radio) and the auto-injected window.__amc_collect()
-// bridge. The Submit button handler receives a JSON object with
-// every input/select/textarea[name] value pre-parsed.
+// Same form payload as the v0.0.4 spike (Textarea, Select, CheckBox,
+// Radio + the auto-injected __amc_collect bridge), but the Submit
+// button no longer needs a manual click-listener to push its return
+// value into #out. Wiring is purely declarative:
+//
+//   Element.Button("Submit").OnClick(handler).OnResult("out")
 //
 // Expected on submit:
 //   { "user":"…", "message":"…", "newsletter":true|false,
 //     "priority":"low"|"normal"|"high", "theme":"light"|"dark"|"auto" }
-// rendered as JSON inside the <pre id=out> output panel.
+// rendered (pretty-printed) inside the <pre id=out> output panel.
 
 class Program {
     public static void Main() {
@@ -57,20 +60,13 @@ class Program {
                             .AddChild(
                                 Element.Button("Submit")
                                     .OnClick((req: string) => req)
+                                    .OnResult("out")
                             )
                     )
                     .AddChild(Element.Pre("(submit to see the form payload)").Id("out"))
             )
 
         page.ApplyTo(win)
-
-        // Spike-only bridge: intercept button clicks so the handler's
-        // return value can land in #out. The inline onclick already
-        // calls the bound handler with the form payload — we mirror
-        // that call here to capture the result. v0.0.5+ may add a
-        // declarative `.OnResult(targetId)` to remove this dance.
-        win.Init("document.addEventListener('click', async (e) => { if (e.target.tagName === 'BUTTON') { const m = (e.target.getAttribute('onclick') || '').match(/window\\.(\\w+)/); if (m) { e.preventDefault(); const r = await window[m[1]](JSON.stringify(window.__amc_collect())); document.getElementById('out').textContent = JSON.stringify(JSON.parse(r), null, 2); } } }, true)")
-
         win.Run()
         win.Destroy()
     }

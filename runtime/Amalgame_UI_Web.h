@@ -121,6 +121,22 @@ int  Amalgame_UI_Web_Return(int slot, const char* seq, int status,
  * free, and do not assume it persists across threads. */
 const char* Amalgame_UI_Web_DetectOSTheme(void);
 
+/* v0.0.5 — open a URL in the user's default OS browser.
+ *
+ * Validates the scheme (http://, https://, file://) and shells out
+ * to the platform browser launcher:
+ *   - macOS   : execvp("open", url)
+ *   - Linux   : execvp("xdg-open", url)
+ *   - Windows : ShellExecuteA(NULL, "open", url, ...)
+ *
+ * Forks on Unix so the host app keeps running. Returns 0 on
+ * success, non-zero on validation failure or launcher error.
+ *
+ * Used by Page.ApplyTo's link interceptor — clicking an <a href>
+ * routes here so the URL opens externally instead of replacing
+ * the webview content. */
+int Amalgame_UI_Web_OpenUrl(const char* url);
+
 #ifdef __cplusplus
 }
 #endif
