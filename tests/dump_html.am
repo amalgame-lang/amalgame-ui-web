@@ -1,57 +1,132 @@
 import Amalgame.UI.Web
 
-// Dump-only helper: builds a representative Page and prints
-// Render() to stdout. Used to verify the baseline CSS, viewport
-// meta, form-field name attrs, and onclick wiring without
-// needing the webview to actually open. Run with:
+// Dump-only helper: prints Page.Render() to stdout to validate
+// the baseline CSS, viewport meta, form-field name attrs, event
+// emission, and theme attribute wiring without spinning up a
+// webview.
 //
-//   bash tests/build_spike.sh dump_html && ./build/dump_html
+// NOTE — the body is built across several `let` blocks instead of
+// one giant fluent chain. amc's type-inference complexity grows
+// non-linearly with chain length and a ~24-deep `.AddChild(...)`
+// chain hangs the compiler. Splitting at midpoints with
+// intermediate Element vars keeps each chain comfortably below
+// the threshold and is the recommended pattern for real apps.
 
 class Program {
     public static void Main() {
-        let page: Page = Page.New()
-            .SetTitle("Render dump")
-            .SetBody(
-                Element.Stack()
-                    .AddChild(Element.Heading("Form"))
-                    .AddChild(Element.Input("user").Size(200, 0))
-                    .AddChild(Element.Textarea("msg").Size(0, 80))
-                    .AddChild(Element.CheckBox("newsletter"))
-                    .AddChild(Element.Select("theme")
-                        .AddChild(Element.Option("light", "Light"))
-                        .AddChild(Element.Option("dark",  "Dark")))
-                    .AddChild(Element.Radio("priority", "low"))
-                    .AddChild(Element.Radio("priority", "high"))
-                    .AddChild(Element.Button("Go").OnClick((req: string) => req))
-                    .AddChild(
-                        Element.Button("Echo")
-                            .OnClick((req: string) => req)
-                            .OnResult("out")
-                    )
-                    .AddChild(Element.Pre("").Id("out"))
-                    // v0.0.5 — WinForms-aligned widgets + OnChange.
-                    .AddChild(Element.Password("pwd"))
-                    .AddChild(Element.Number("qty", 1, 100, 1))
-                    .AddChild(Element.Slider("vol", 0, 100, 5))
-                    .AddChild(Element.DatePicker("when"))
-                    .AddChild(Element.TimePicker("hour"))
-                    .AddChild(Element.ColorPicker("tint"))
-                    .AddChild(Element.ProgressBar(42, 100))
-                    .AddChild(Element.Image("file:///tmp/none.png"))
-                    .AddChild(Element.Link("docs", "https://example.com"))
-                    .AddChild(Element.ListBox("tags", 4)
-                        .AddChild(Element.Option("a", "Alpha"))
-                        .AddChild(Element.Option("b", "Beta")))
-                    .AddChild(Element.Input("live").OnChange((req: string) => req))
-                    .AddChild(
-                        Element.Grid(0, 3, 8)
-                            .AddChild(Element.Label("r1c1"))
-                            .AddChild(Element.Label("r1c2"))
-                            .AddChild(Element.Label("r1c3")))
-                    .AddChild(
-                        Element.AbsoluteContainer()
-                            .AddChild(Element.Label("pinned").Position(40, 20)))
-            )
+        // ListView headers + rows (must be List<string>).
+        let headers: List<string> = new List<string>()
+        headers.Add("Name")
+        headers.Add("Size")
+        headers.Add("Modified")
+        let row1: List<string> = new List<string>()
+        row1.Add("readme.md")
+        row1.Add("2 KB")
+        row1.Add("today")
+        let row2: List<string> = new List<string>()
+        row2.Add("facade.am")
+        row2.Add("32 KB")
+        row2.Add("now")
+
+        // Block A — original spike form (v0.0.3/0.0.4).
+        let blockA: Element = Element.Stack()
+            .AddChild(Element.Heading("Form"))
+            .AddChild(Element.Input("user").Size(200, 0))
+            .AddChild(Element.Textarea("msg").Size(0, 80))
+            .AddChild(Element.CheckBox("newsletter"))
+            .AddChild(Element.Select("theme")
+                .AddChild(Element.Option("light", "Light"))
+                .AddChild(Element.Option("dark",  "Dark")))
+            .AddChild(Element.Radio("priority", "low"))
+            .AddChild(Element.Radio("priority", "high"))
+            .AddChild(Element.Button("Go").OnClick((req: string) => req))
+            .AddChild(
+                Element.Button("Echo")
+                    .OnClick((req: string) => req)
+                    .OnResult("out"))
+            .AddChild(Element.Pre("").Id("out"))
+
+        // Block B — v0.0.5 WinForms-aligned input widgets.
+        let blockB: Element = Element.Stack()
+            .AddChild(Element.Heading("v0.0.5 widgets"))
+            .AddChild(Element.Password("pwd"))
+            .AddChild(Element.Number("qty", 1, 100, 1))
+            .AddChild(Element.Slider("vol", 0, 100, 5))
+            .AddChild(Element.DatePicker("when"))
+            .AddChild(Element.TimePicker("hour"))
+            .AddChild(Element.ColorPicker("tint"))
+            .AddChild(Element.ProgressBar(42, 100))
+            .AddChild(Element.PictureBox("file:///tmp/none.png"))
+            .AddChild(Element.Link("docs", "https://example.com"))
+            .AddChild(Element.ListBox("tags", 4)
+                .AddChild(Element.Option("a", "Alpha"))
+                .AddChild(Element.Option("b", "Beta")))
+            .AddChild(Element.Input("live").OnChange((req: string) => req))
+
+        // Block C — layout sugar.
+        let blockC: Element = Element.Stack()
+            .AddChild(Element.Heading("Layout"))
+            .AddChild(Element.Grid(0, 3, 8)
+                .AddChild(Element.Label("r1c1"))
+                .AddChild(Element.Label("r1c2"))
+                .AddChild(Element.Label("r1c3")))
+            .AddChild(Element.AbsoluteContainer()
+                .Size(0, 100)
+                .AddChild(Element.Label("pinned").Position(40, 20)))
+            .AddChild(Element.Flow("row")
+                .AddChild(Element.Button("A"))
+                .AddChild(Element.Button("B"))
+                .AddChild(Element.Button("C")))
+
+        // Block D — Common Controls completions.
+        let blockD: Element = Element.Stack()
+            .AddChild(Element.Heading("Containers + lists"))
+            .AddChild(Element.GroupBox("Contact")
+                .AddChild(Element.MaskedTextBox("phone", "[0-9 +()-]{7,}", "tel"))
+                .AddChild(Element.MaskedTextBox("zip", "[0-9]{5}", "numeric")))
+            .AddChild(Element.ToolStrip()
+                .AddChild(Element.Button("New"))
+                .AddChild(Element.Button("Open"))
+                .AddChild(Element.Button("Save").Enabled(false)))
+            .AddChild(Element.CheckedListBox("perms")
+                .AddChild(Element.CheckedItem("perms", "read",  "Read"))
+                .AddChild(Element.CheckedItem("perms", "write", "Write"))
+                .AddChild(Element.CheckedItem("perms", "exec",  "Execute")))
+            .AddChild(Element.ListView(headers)
+                .AddChild(Element.ListViewRow(row1))
+                .AddChild(Element.ListViewRow(row2)))
+            .AddChild(Element.Iframe("https://example.com").Size(0, 120))
+
+        // Block E — TabControl + multi-event + StatusStrip.
+        let labelGeneral:  Element = Element.Label("General settings")
+        let labelAdvanced: Element = Element.Label("Advanced settings")
+        let blockE: Element = Element.Stack()
+            .AddChild(Element.Heading("Tabs + events"))
+            .AddChild(Element.TabControl("settings")
+                .AddChild(Element.Tab("settings", "general", "General", labelGeneral)
+                    .Attr("checked", "checked"))
+                .AddChild(Element.Tab("settings", "advanced", "Advanced", labelAdvanced)))
+            .AddChild(Element.Input("multi")
+                .Tooltip("Type / focus / blur — every event fires")
+                .OnFocus((req: string) => req)
+                .OnBlur((req: string) => req)
+                .OnChange((req: string) => req)
+                .OnKeyDown((req: string) => req))
+            .AddChild(Element.StatusStrip()
+                .AddChild(Element.Label("Ready"))
+                .AddChild(Element.Label("|"))
+                .AddChild(Element.Label("ui-web v0.0.5")))
+
+        // Compose the page.
+        let body: Element = Element.Stack()
+            .AddChild(blockA)
+            .AddChild(blockB)
+            .AddChild(blockC)
+            .AddChild(blockD)
+            .AddChild(blockE)
+            .Raw("<!-- raw injection: should render verbatim -->")
+
+        let page: Page = Page.New().SetTitle("Render dump").SetBody(body)
         Console.WriteLine(page.Render())
     }
 }

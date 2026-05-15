@@ -284,12 +284,16 @@ public class Element {
     public Children:       List<Element>
     public AttrKeys:       List<string>
     public AttrVals:       List<string>
-    public ClickFn:        Closure
-    public HasClick:       bool
-    public ChangeFn:       Closure  // input/select/textarea change handler
-    public HasChange:      bool
+    // Event table — one row per (DOM event, handler, optional result
+    // routing target). Explicit setters (.OnClick / .OnChange / …)
+    // are sugar over .On(name, handler). The list-of-events shape lets
+    // user code attach any DOM event (mouseup, wheel, drop, custom-…)
+    // without facade changes — see docs/architecture.md.
+    public Events:         List<string>   // DOM event names ("click", "change", …)
+    public EventHandlers:  List<Closure>
+    public EventResults:   List<string>   // per-event #target for return routing
     public StyleCss:       string   // cumulative inline style — see Style()
-    public ResultTargetId: string   // when non-empty, OnClick's return is routed into this element id
+    public ResultTargetId: string   // default routing target — applies to subsequent .On*() calls
 
     public Element(tag: string) {
         this.Tag            = tag
@@ -297,8 +301,9 @@ public class Element {
         this.Children       = new List<Element>()
         this.AttrKeys       = new List<string>()
         this.AttrVals       = new List<string>()
-        this.HasClick       = false
-        this.HasChange      = false
+        this.Events         = new List<string>()
+        this.EventHandlers  = new List<Closure>()
+        this.EventResults   = new List<string>()
         this.StyleCss       = ""
         this.ResultTargetId = ""
     }
@@ -373,57 +378,170 @@ public class Element {
         return this.Style("position:absolute;left:" + String_FromInt(x) + "px;top:" + String_FromInt(y) + "px")
     }
 
-    // Wire a click handler. Page.Render() walks the tree and
-    // allocates a JS-callable name `_amc_<n>` per OnClick; ApplyTo
-    // then registers each via Window.Bind. The handler receives a
-    // JSON args array (empty `[]` for plain clicks) and must
-    // return valid JSON.
-    public Element OnClick(handler: Closure) {
-        this.ClickFn  = handler
-        this.HasClick = true
+    // ── Common WinForms-style properties (v0.0.5) ─────────
+    //
+    // Setters that mirror the WinForms designer Properties pane.
+    // Each is sugar over .Attr or .Style; the names are chosen to
+    // make WinForms ports read naturally.
+
+    // WinForms .Visible — toggles `display:none`. Falsy hides the
+    // element entirely (no layout space taken).
+    public Element Visible(v: bool) {
+        if (!v) {
+            this.Style("display:none")
+        }
         return this
     }
 
-    // Route this element's OnClick return value into another
-    // element's text content. Use with `.OnClick(handler)` on the
-    // same element — the bridge awaits the handler's returned JSON,
-    // pretty-prints it (falling back to the raw string if it isn't
-    // valid JSON), and writes the result into
-    // `document.getElementById(targetId)`. Spare an output panel
-    // wiring a manual click listener for every form:
+    // WinForms .Enabled — sets the HTML `disabled` attribute on
+    // form controls AND dims non-input elements via opacity +
+    // pointer-events. Falsy disables interaction.
+    public Element Enabled(e: bool) {
+        if (!e) {
+            this.Attr("disabled", "disabled")
+            this.Style("opacity:0.6;pointer-events:none")
+        }
+        return this
+    }
+
+    // WinForms .ToolTip — sets the HTML `title` attribute. Browsers
+    // render a native OS-styled tooltip on hover, themed by the OS
+    // (no CSS variables needed).
+    public Element Tooltip(text: string) {
+        return this.Attr("title", text)
+    }
+
+    // WinForms .TabIndex — keyboard focus order. Pass 0 to leave
+    // the default natural-order untouched; positive values force
+    // an explicit position.
+    public Element TabIndex(n: int) {
+        return this.Attr("tabindex", String_FromInt(n))
+    }
+
+    // WinForms .ForeColor — shorthand for `color: <css>`. Accepts
+    // any CSS color: `#abc`, `rgb(…)`, `var(--amc-accent)`, named.
+    public Element ForeColor(css: string) {
+        return this.Style("color:" + css)
+    }
+
+    // WinForms .BackColor — shorthand for `background: <css>`.
+    public Element BackColor(css: string) {
+        return this.Style("background:" + css)
+    }
+
+    // WinForms .Font — shorthand for `font-family` + `font-size`.
+    // Pass `""` to leave the family at the inherited default; pass
+    // `0` to leave the size untouched.
+    public Element Font(family: string, sizePx: int) {
+        if (String_Length(family) > 0) {
+            this.Style("font-family:" + family)
+        }
+        if (sizePx > 0) {
+            this.Style("font-size:" + String_FromInt(sizePx) + "px")
+        }
+        return this
+    }
+
+    // WinForms .Tag — arbitrary string payload round-tripped via a
+    // `data-tag` attribute. Useful for stamping IDs without using
+    // the HTML `id` attribute (which must be globally unique).
+    // Named DataTag to avoid clashing with the .Tag field that
+    // stores the HTML element tag name (div/span/input/…).
+    public Element DataTag(data: string) {
+        return this.Attr("data-tag", data)
+    }
+
+    // Escape hatch: inject a raw HTML string as a child. The dev
+    // is responsible for escaping. Useful when wrapping a JS lib
+    // (Plotly, CodeMirror, Tabulator) that wants to render into a
+    // specific markup chunk. The raw string is appended after any
+    // existing children and Text content.
+    //
+    //   Element.Div().Id("plot").Raw("<svg width=200 height=200>…</svg>")
+    public Element Raw(html: string) {
+        let child: Element = new Element("__raw__")
+        child.Text = html
+        this.Children.Add(child)
+        return this
+    }
+
+    // ── Event wiring (uniform DOM-event model) ────────────
+    //
+    // Every event handler is routed through Window.Bind: Page.Render
+    // allocates a JS-callable name `_amc_<n>` per event, and the
+    // generated `on<event>=` attribute calls it with the JSON form
+    // state (auto-collected by window.__amc_collect, injected by
+    // Page.ApplyTo). Handlers must return valid JSON; the return
+    // is discarded unless OnResult routed it into a target.
+    //
+    // The explicit setters (.OnClick / .OnChange / .OnFocus / …)
+    // are sugar over .On(eventName, handler). The generic form is
+    // the extension hatch — custom components can attach `wheel`,
+    // `drop`, `custom-foo`, anything supported by the browser.
+
+    // Generic event binder. Attaches `handler` to the named DOM
+    // event ("click", "change", "mouseenter", …). The current
+    // `ResultTargetId` (set via OnResult) is captured at the time
+    // of this call, so OnResult must be called BEFORE the event
+    // setter to take effect.
+    public Element On(eventName: string, handler: Closure) {
+        this.Events.Add(eventName)
+        this.EventHandlers.Add(handler)
+        this.EventResults.Add(this.ResultTargetId)
+        return this
+    }
+
+    // Route subsequent event handler return values into another
+    // element's text content. Use with any `.On*` setter — the
+    // bridge awaits the handler's returned JSON, pretty-prints it
+    // (falling back to the raw string if it isn't valid JSON), and
+    // writes the result into `document.getElementById(targetId)`.
     //
     //   Element.Button("Submit")
-    //       .OnClick((req: string) => req)
-    //       .OnResult("out")
-    //   …
-    //   Element.Pre("(submit to see the payload)").Id("out")
+    //       .OnResult("out")            // route comes first
+    //       .OnClick((req) => req)
+    //   Element.Pre("").Id("out")
     //
-    // Pass "" to clear a previously-set target. No-op if the target
-    // element doesn't exist at click time.
+    // For backwards compat with the v0.0.5 pre-refactor pattern
+    // (`.OnClick(h).OnResult("out")` — setter THEN route), Page.Render
+    // applies `ResultTargetId` to any event whose captured target
+    // is empty. Pass "" to reset.
     public Element OnResult(targetId: string) {
         this.ResultTargetId = targetId
         return this
     }
 
-    // Wire a change handler. Fires on `change` for inputs / selects
-    // and on `input` for textareas — the union covers the cases
-    // ui-forms' OnChanged event covered (TextBox, CheckBox, Radio,
-    // ComboBox, ListBox). The handler receives the same JSON form
-    // payload as OnClick (auto-collected by __amc_collect), so you
-    // can read every named field — not just the one that changed —
-    // and react accordingly:
+    // Common DOM events — sugar over .On(name, h). The mapping
+    // mirrors WinForms event names where possible:
     //
-    //   Element.Input("user").OnChange((req: string) => {
-    //       // req == {"user":"…","other":"…"}
-    //       …
-    //   })
-    //
-    // OnChange + OnClick are independent: a single element can
-    // carry both. Like OnClick, the handler's return is wired via
-    // OnResult(targetId) if set, otherwise discarded.
+    //   WinForms.Click           → .OnClick(h)        / "click"
+    //   WinForms.DoubleClick     → .OnDblClick(h)     / "dblclick"
+    //   WinForms.TextChanged     → .OnChange(h)       / "change" + "input"
+    //   WinForms.GotFocus/Enter  → .OnFocus(h)        / "focus"
+    //   WinForms.LostFocus/Leave → .OnBlur(h)         / "blur"
+    //   WinForms.MouseEnter      → .OnMouseEnter(h)   / "mouseenter"
+    //   WinForms.MouseLeave      → .OnMouseLeave(h)   / "mouseleave"
+    //   WinForms.KeyDown         → .OnKeyDown(h)      / "keydown"
+    //   WinForms.KeyUp           → .OnKeyUp(h)        / "keyup"
+    public Element OnClick(handler: Closure)      { return this.On("click",      handler) }
+    public Element OnDblClick(handler: Closure)   { return this.On("dblclick",   handler) }
+    public Element OnFocus(handler: Closure)      { return this.On("focus",      handler) }
+    public Element OnBlur(handler: Closure)       { return this.On("blur",       handler) }
+    public Element OnMouseEnter(handler: Closure) { return this.On("mouseenter", handler) }
+    public Element OnMouseLeave(handler: Closure) { return this.On("mouseleave", handler) }
+    public Element OnKeyDown(handler: Closure)    { return this.On("keydown",    handler) }
+    public Element OnKeyUp(handler: Closure)      { return this.On("keyup",      handler) }
+
+    // OnChange registers two underlying DOM events so the handler
+    // fires on commit (change — selects, radios, checkboxes, text
+    // input blur) AND on live input (textareas + text inputs).
+    // The two calls dedupe themselves via the bound name; the
+    // handler runs once per logical change.
     public Element OnChange(handler: Closure) {
-        this.ChangeFn  = handler
-        this.HasChange = true
+        this.On("change", handler)
+        if (this.Tag == "textarea" || this.Tag == "input") {
+            this.On("input", handler)
+        }
         return this
     }
 
@@ -684,6 +802,193 @@ public class Element {
         let e: Element = new Element("a")
         return e.Attr("href", url).SetText(text)
     }
+
+    // ── Additional WinForms widgets (v0.0.5 greens) ───────
+
+    // Alias for Image(src) — matches the WinForms toolbox name.
+    public static Element PictureBox(src: string) {
+        return Element.Image(src)
+    }
+
+    // Alias for Div() — matches the WinForms toolbox name. Reads
+    // more naturally at WinForms-port call sites.
+    public static Element Panel() {
+        return Element.Div()
+    }
+
+    // <fieldset> with a <legend> — equivalent to WinForms' GroupBox.
+    // Theme: native browser `fieldset` styling overridden in the
+    // baseline to use --amc-border / --amc-fg.
+    //
+    //   Element.GroupBox("Personal info")
+    //       .AddChild(Element.Input("name"))
+    //       .AddChild(Element.Input("email"))
+    public static Element GroupBox(title: string) {
+        let e: Element = new Element("fieldset")
+        e.Class("amc-groupbox")
+        let legend: Element = new Element("legend")
+        legend.SetText(title)
+        e.Children.Add(legend)
+        return e
+    }
+
+    // Flex container with wrap — equivalent to WinForms'
+    // FlowLayoutPanel. `direction` is "row" (LTR wrap) or
+    // "column" (TTB wrap). Children flow naturally; gap is 8px.
+    public static Element Flow(direction: string) {
+        let e: Element = new Element("div")
+        var dir: string = "row"
+        if (direction == "column") {
+            dir = "column"
+        }
+        return e.Style("display:flex;flex-direction:" + dir + ";flex-wrap:wrap;gap:8px")
+    }
+
+    // Fixed-bottom status bar — equivalent to WinForms' StatusStrip.
+    // Anchors to the bottom of the viewport via `position:fixed`.
+    // Add segments as children (Label, Pre, …). The baseline themes
+    // it with --amc-surface background + --amc-border top border.
+    public static Element StatusStrip() {
+        let e: Element = new Element("footer")
+        return e.Class("amc-statusstrip")
+    }
+
+    // Horizontal button bar — equivalent to WinForms' ToolStrip.
+    // Themed via the `.amc-toolstrip` class in the baseline (smaller
+    // padding, --amc-surface background).
+    public static Element ToolStrip() {
+        let e: Element = new Element("div")
+        return e.Class("amc-toolstrip")
+            .Style("display:flex;flex-direction:row;gap:4px;align-items:center;padding:4px 8px")
+    }
+
+    // Embedded webpage — equivalent to WinForms' WebBrowser (which
+    // itself wraps IE). Useful for embedding docs / preview panels
+    // inside the main app. The iframe inherits the page's
+    // --amc-border by default.
+    public static Element Iframe(url: string) {
+        let e: Element = new Element("iframe")
+        return e.Attr("src", url).Class("amc-iframe")
+    }
+
+    // Masked text input — equivalent to WinForms' MaskedTextBox.
+    // `pattern` is a JS RegExp source (HTML5 `pattern` attr) used
+    // for native form validation; `mode` is the soft-keyboard hint
+    // ("numeric" / "tel" / "email" / "url" / "decimal" / "" for
+    // default text). Browsers show the matching keyboard on mobile
+    // and reject submissions that don't match the pattern.
+    //
+    //   Element.MaskedTextBox("phone", "[0-9 +()-]{7,}", "tel")
+    public static Element MaskedTextBox(name: string, pattern: string, mode: string) {
+        let e: Element = new Element("input")
+        e.Attr("type", "text").Bind(name)
+        if (String_Length(pattern) > 0) {
+            e.Attr("pattern", pattern)
+        }
+        if (String_Length(mode) > 0) {
+            e.Attr("inputmode", mode)
+        }
+        return e
+    }
+
+    // Multi-select checkbox list — equivalent to WinForms'
+    // CheckedListBox. Each child is wired as a <li><label><input
+    // type=checkbox name=<name> value=<itemValue>>…</label></li>
+    // by Element.CheckedItem. Auto-collect reports an array of
+    // checked values under `<name>` (planned v0.0.6); for now
+    // attach OnChange and read via Window.Eval.
+    public static Element CheckedListBox(name: string) {
+        let e: Element = new Element("ul")
+        return e.Class("amc-checkedlistbox").Attr("data-name", name)
+    }
+
+    // One row in a CheckedListBox. Use as a child of
+    // Element.CheckedListBox(name); `value` is the form value
+    // reported when checked, `label` is the visible text.
+    public static Element CheckedItem(name: string, value: string, label: string) {
+        let li: Element = new Element("li")
+        let lbl: Element = new Element("label")
+        let inp: Element = new Element("input")
+        inp.Attr("type", "checkbox").Attr("value", value).Bind(name)
+        lbl.Children.Add(inp)
+        let txt: Element = new Element("span")
+        txt.SetText(" " + label)
+        lbl.Children.Add(txt)
+        li.Children.Add(lbl)
+        return li
+    }
+
+    // Tabular list view — equivalent to WinForms' ListView in
+    // Details mode. `headers` is the column titles. Populate with
+    // Element.ListViewRow(values: List<string>) children.
+    public static Element ListView(headers: List<string>) {
+        let e: Element = new Element("table")
+        e.Class("amc-listview")
+        let thead: Element = new Element("thead")
+        let row:   Element = new Element("tr")
+        let nh: int = headers.Count()
+        for i in 0..nh {
+            let th: Element = new Element("th")
+            th.SetText(headers.Get(i))
+            row.Children.Add(th)
+        }
+        thead.Children.Add(row)
+        e.Children.Add(thead)
+        let tbody: Element = new Element("tbody")
+        tbody.Class("amc-listview-body")
+        e.Children.Add(tbody)
+        return e
+    }
+
+    // One ListView row. Pass a list of cell values matching the
+    // header count. Append as a child of the ListView; rows end
+    // up inside its <tbody>.
+    public static Element ListViewRow(values: List<string>) {
+        let tr: Element = new Element("tr")
+        let nv: int = values.Count()
+        for i in 0..nv {
+            let td: Element = new Element("td")
+            td.SetText(values.Get(i))
+            tr.Children.Add(td)
+        }
+        return tr
+    }
+
+    // CSS-only tab control — equivalent to WinForms' TabControl.
+    // Uses radio-button + label + sibling-selector trick so no JS
+    // is needed. `groupName` must be unique on the page (the
+    // radios share it). Populate via .AddChild(Element.Tab(...)).
+    //
+    //   Element.TabControl("settings")
+    //       .AddChild(Element.Tab("settings", "general", "General", general).Attr("checked","checked"))
+    //       .AddChild(Element.Tab("settings", "advanced", "Advanced", advanced))
+    //
+    // The first Tab to set `checked="checked"` is the default
+    // active panel.
+    public static Element TabControl(groupName: string) {
+        let e: Element = new Element("div")
+        return e.Class("amc-tabs").Attr("data-group", groupName)
+    }
+
+    // One tab + its panel. Renders as an <input type=radio> +
+    // <label> + <div class=amc-tab-panel> sibling triple. CSS in
+    // the baseline shows the panel adjacent to the checked radio
+    // and hides the rest.
+    public static Element Tab(groupName: string, id: string, label: string, body: Element) {
+        let wrap: Element = new Element("div")
+        wrap.Class("amc-tab")
+        let radio: Element = new Element("input")
+        radio.Attr("type", "radio").Attr("name", groupName).Attr("id", "tab-" + groupName + "-" + id)
+        let lbl: Element = new Element("label")
+        lbl.Attr("for", "tab-" + groupName + "-" + id).SetText(label).Class("amc-tab-label")
+        let panel: Element = new Element("div")
+        panel.Class("amc-tab-panel")
+        panel.Children.Add(body)
+        wrap.Children.Add(radio)
+        wrap.Children.Add(lbl)
+        wrap.Children.Add(panel)
+        return wrap
+    }
 }
 
 // ─── Page ──────────────────────────────────────────────────
@@ -850,6 +1155,40 @@ public class Page {
         c = c + "textarea{resize:none}"
         c = c + "input:focus,select:focus,textarea:focus{outline:2px solid var(--amc-accent);outline-offset:-1px}"
         c = c + "pre{padding:8px;background:var(--amc-surface);border-radius:var(--amc-radius);overflow:auto;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--amc-fg)}"
+        // v0.0.5 — themed widget rules. All colors via --amc-* so
+        // light/dark flip happens automatically on [data-theme].
+        c = c + "fieldset.amc-groupbox{border:1px solid var(--amc-border);border-radius:var(--amc-radius);padding:8px 12px;margin:0}"
+        c = c + "fieldset.amc-groupbox>legend{color:var(--amc-muted);padding:0 4px;font-size:12px}"
+        c = c + "footer.amc-statusstrip{position:fixed;left:0;right:0;bottom:0;padding:4px 12px;background:var(--amc-surface);border-top:1px solid var(--amc-border);color:var(--amc-muted);font-size:12px;display:flex;gap:12px}"
+        c = c + ".amc-toolstrip{background:var(--amc-surface);border:1px solid var(--amc-border);border-radius:var(--amc-radius)}"
+        c = c + ".amc-toolstrip>button{padding:4px 8px;border:none;background:transparent}"
+        c = c + ".amc-toolstrip>button:hover{background:var(--amc-border)}"
+        c = c + "iframe.amc-iframe{border:1px solid var(--amc-border);border-radius:var(--amc-radius);background:var(--amc-bg);width:100%;min-height:200px}"
+        c = c + "table.amc-listview{border-collapse:collapse;width:100%;font:inherit}"
+        c = c + "table.amc-listview th,table.amc-listview td{border:1px solid var(--amc-border);padding:4px 8px;text-align:left}"
+        c = c + "table.amc-listview thead th{background:var(--amc-surface);color:var(--amc-fg);font-weight:600}"
+        c = c + "table.amc-listview tbody tr:hover{background:var(--amc-surface)}"
+        c = c + "ul.amc-checkedlistbox{list-style:none;margin:0;padding:4px;border:1px solid var(--amc-border);border-radius:var(--amc-radius);max-height:180px;overflow:auto;background:var(--amc-bg)}"
+        c = c + "ul.amc-checkedlistbox>li{padding:2px 4px}"
+        c = c + "ul.amc-checkedlistbox>li:hover{background:var(--amc-surface)}"
+        c = c + "ul.amc-checkedlistbox label{display:flex;align-items:center;gap:6px;cursor:pointer}"
+        // CSS-only tabs — radio + sibling selector. The Tab() builder
+        // emits 3 wrapped triples (radio, label, panel) per tab.
+        // Tabs share their `name`, so checking one unchecks the rest.
+        // Labels float left so they form a row at the top of the
+        // .amc-tabs container; panels stack underneath and only the
+        // one whose radio is :checked is shown.
+        c = c + ".amc-tabs{border:1px solid var(--amc-border);border-radius:var(--amc-radius);background:var(--amc-bg);display:flex;flex-direction:column}"
+        c = c + ".amc-tab{display:contents}"
+        c = c + ".amc-tabs>.amc-tab>input[type=radio]{position:absolute;opacity:0;pointer-events:none}"
+        c = c + ".amc-tabs>.amc-tab>label.amc-tab-label{order:1;padding:6px 12px;cursor:pointer;border-right:1px solid var(--amc-border);color:var(--amc-muted);background:var(--amc-surface)}"
+        c = c + ".amc-tabs>.amc-tab>input[type=radio]:checked+label.amc-tab-label{background:var(--amc-bg);color:var(--amc-fg);border-bottom:2px solid var(--amc-accent);margin-bottom:-1px;z-index:1}"
+        c = c + ".amc-tabs>.amc-tab>.amc-tab-panel{order:2;display:none;padding:12px;border-top:1px solid var(--amc-border);width:100%}"
+        c = c + ".amc-tabs>.amc-tab>input[type=radio]:checked~.amc-tab-panel{display:block}"
+        // Invalid form fields — paired with MaskedTextBox `pattern`
+        // attribute. The `:invalid` pseudo-class auto-applies once
+        // the user has typed; we don't want it red on first paint.
+        c = c + "input:not(:placeholder-shown):invalid{border-color:#c0392b}"
         return c
     }
 
@@ -898,6 +1237,11 @@ public class Page {
 
     // Walk one element. Recursive — children render inside.
     public string RenderElement(e: Element) {
+        // Pseudo-tag for Element.Raw(html) — emit the raw payload
+        // verbatim, no `<tag>` wrapping. See Element.Raw().
+        if (e.Tag == "__raw__") {
+            return e.Text
+        }
         var s: string = "<" + e.Tag
         let nk: int = e.AttrKeys.Count()
         for i in 0..nk {
@@ -908,53 +1252,30 @@ public class Page {
         if (String_Length(e.StyleCss) > 0) {
             s = s + " style=\"" + Html.Escape(e.StyleCss) + "\""
         }
-        if (e.HasClick) {
+        // Event emission — one HTML `on<event>=` attribute per row in
+        // the Element's event table. Each handler is bound under a
+        // fresh `_amc_<n>` name via Window.Bind. Result routing
+        // falls back from the per-event captured target to the
+        // Element's default ResultTargetId, so both
+        // `.OnResult(x).OnClick(h)` and `.OnClick(h).OnResult(x)`
+        // work as expected.
+        let ne: int = e.Events.Count()
+        for i in 0..ne {
             this.Counter = this.Counter + 1
             let bname: string = "_amc_" + String_FromInt(this.Counter)
             this.BindNames.Add(bname)
-            this.BindHandlers.Add(e.ClickFn)
-            // Pass JSON-stringified form state to every handler so
-            // the AM side reads inputs declaratively — see the
-            // window.__amc_collect bridge injected by ApplyTo. When
-            // OnResult is set, wrap the call in window.__amc_route
-            // (also injected by ApplyTo) so the handler's return
-            // lands in the target element without the caller writing
-            // a manual click listener.
+            this.BindHandlers.Add(e.EventHandlers.Get(i))
             let call: string = "window." + bname + "(JSON.stringify(window.__amc_collect()))"
-            if (String_Length(e.ResultTargetId) > 0) {
-                // Json.EncodeString produces a double-quoted JS
-                // string literal; Html.Escape then turns the `"` into
-                // `&quot;` so the surrounding `onclick="…"` parses
-                // cleanly. Apostrophes survive unescaped — fine because
-                // the JS literal is double-quoted, not single-quoted.
-                let idLit: string = Html.Escape(Json.EncodeString(e.ResultTargetId))
-                s = s + " onclick=\"window.__amc_route(" + call + "," + idLit + ")\""
-            } else {
-                s = s + " onclick=\"" + call + "\""
+            var target: string = e.EventResults.Get(i)
+            if (String_Length(target) == 0) {
+                target = e.ResultTargetId
             }
-        }
-        if (e.HasChange) {
-            this.Counter = this.Counter + 1
-            let cname: string = "_amc_" + String_FromInt(this.Counter)
-            this.BindNames.Add(cname)
-            this.BindHandlers.Add(e.ChangeFn)
-            // Same form-state payload as onclick. We hook both
-            // `onchange` (fires on commit — selects, radios,
-            // checkboxes, blur for text inputs) and `oninput`
-            // (fires on every keystroke — necessary for textareas
-            // and live validation). The two are deduped by routing
-            // through the same bound name; handlers see one call
-            // per logical change.
-            let call: string = "window." + cname + "(JSON.stringify(window.__amc_collect()))"
-            var attrs: string = call
-            if (String_Length(e.ResultTargetId) > 0) {
-                let idLit: string = Html.Escape(Json.EncodeString(e.ResultTargetId))
-                attrs = "window.__amc_route(" + call + "," + idLit + ")"
+            var expr: string = call
+            if (String_Length(target) > 0) {
+                let idLit: string = Html.Escape(Json.EncodeString(target))
+                expr = "window.__amc_route(" + call + "," + idLit + ")"
             }
-            s = s + " onchange=\"" + attrs + "\""
-            if (e.Tag == "textarea" || e.Tag == "input") {
-                s = s + " oninput=\"" + attrs + "\""
-            }
+            s = s + " on" + e.Events.Get(i) + "=\"" + expr + "\""
         }
         s = s + ">"
         if (Page.IsVoidTag(e.Tag)) {
