@@ -391,6 +391,43 @@ public class Dialog {
         win.Eval(js)
     }
 
+    // Open-file picker that ALSO reads the file content. Same UX
+    // as OpenFile but the handler receives a JSON-encoded object:
+    //
+    //   {"name": "report.txt", "content": "Hello, file..."}
+    //
+    // Content is read via FileReader.readAsText so binary files
+    // come back as garbled strings — for binary use cases, pass
+    // `binary=true` and the content is base64-encoded
+    // (`readAsDataURL`'s suffix). `accept` filters as in OpenFile.
+    //
+    // On cancel, the handler receives `""` (empty string).
+    public static void OpenFileContent(win: Window, accept: string, binary: bool, handler: Closure) {
+        win.Bind("_amc_dialog_filecontent", handler)
+        let acceptLit: string = Json.EncodeString(accept)
+        var readerCall: string = "r.readAsText(f);"
+        if (binary) {
+            readerCall = "r.readAsDataURL(f);"
+        }
+        var js: string = "(function(){var i=document.createElement('input');i.type='file';i.style.display='none';"
+        js = js + "var a=" + acceptLit + ";if(a)i.accept=a;"
+        js = js + "i.onchange=function(){var f=i.files&&i.files[0];if(!f){window._amc_dialog_filecontent('');document.body.removeChild(i);return;}"
+        js = js + "var r=new FileReader();"
+        js = js + "r.onload=function(){var c=r.result;"
+        if (binary) {
+            // strip the `data:.../base64,` prefix so the AM side
+            // gets just the base64 payload.
+            js = js + "var idx=c.indexOf(',');if(idx>=0)c=c.substring(idx+1);"
+        }
+        js = js + "window._amc_dialog_filecontent(JSON.stringify({name:f.name,content:c}));document.body.removeChild(i);};"
+        js = js + readerCall
+        js = js + "};"
+        js = js + "i.oncancel=function(){window._amc_dialog_filecontent('');document.body.removeChild(i);};"
+        js = js + "document.body.appendChild(i);i.click();"
+        js = js + "})()"
+        win.Eval(js)
+    }
+
     // Save-file via a download anchor — equivalent to WinForms'
     // SaveFileDialog combined with writing the bytes. The browser
     // doesn't let us trigger the native "Save As" picker, so we
@@ -1321,6 +1358,134 @@ public class Element {
         let e: Element = new Element("div")
         return e.Class("amc-treeleaf").SetText(caption)
     }
+
+    // ── MenuBar (v0.0.8) ──────────────────────────────────
+    //
+    // App-level horizontal menu strip — equivalent to WinForms'
+    // MenuStrip and what VS Code / Slack / Discord render with
+    // HTML/CSS. The native OS-menubar version (Win32 / NSMenu /
+    // GtkMenuBar) is planned as opt-in in v0.1.0; the common
+    // path here renders identically on every OS and themes via
+    // the standard --amc-* variables.
+    //
+    //   Element.MenuBar()
+    //       .AddChild(Element.MenuItem("File")
+    //           .AddChild(Element.MenuOption("New", "amc_new"))
+    //           .AddChild(Element.MenuOption("Open…", "amc_open"))
+    //           .AddChild(Element.MenuSeparator())
+    //           .AddChild(Element.MenuOption("Quit", "amc_quit")))
+    //       .AddChild(Element.MenuItem("Edit")
+    //           .AddChild(Element.MenuOption("Undo", "amc_undo")))
+    //
+    // Each MenuOption emits a click that calls
+    // `window.<actionName>('')`. Bind the action via
+    // `Window.Bind("amc_new", handler)` after `Application.Run`.
+    // (The shorter path is to set `onclick` directly via
+    // `.Attr("onclick", "...")` if the action is pure JS.)
+
+    // Horizontal <nav> container styled as a top app menubar.
+    public static Element MenuBar() {
+        let e: Element = new Element("nav")
+        return e.Class("amc-menubar")
+    }
+
+    // One top-level menu (label + dropdown). The label is stored
+    // in `Text`; AddChild appends MenuOption / MenuSeparator
+    // children which become the popup content. RenderElement
+    // wraps this in `<details class=amc-menu><summary>label</summary>
+    // <div class=amc-menu-popup>children</div></details>` so the
+    // user can use the familiar fluent AddChild without dealing
+    // with the popup wrapper directly.
+    public static Element MenuItem(label: string) {
+        let e: Element = new Element("__menuitem__")
+        return e.SetText(label)
+    }
+
+    // One row inside a MenuItem's dropdown. `actionName` is the
+    // `window.<actionName>('')` call to invoke on click — bind it
+    // via Window.Bind after Application.Run. Rendered as a
+    // <button> inside the popup div (last child of the parent
+    // <details>); AddChild on MenuItem auto-routes to the popup.
+    public static Element MenuOption(label: string, actionName: string) {
+        let b: Element = new Element("button")
+        b.Class("amc-menu-item").SetText(label).Attr("type", "button")
+        b.Attr("onclick", "this.closest('details').open=false;window." + actionName + "('');")
+        return b
+    }
+
+    // Horizontal divider inside a MenuItem's dropdown — visually
+    // groups related options.
+    public static Element MenuSeparator() {
+        let e: Element = new Element("hr")
+        return e.Class("amc-menu-sep")
+    }
+
+    // ── SplitContainer (v0.0.8) ───────────────────────────
+    //
+    // Two-pane resizable container — equivalent to WinForms'
+    // SplitContainer. Children are placed in two slots separated
+    // by a draggable divider. `orientation` is "row" (left/right
+    // panes, vertical divider) or "column" (top/bottom panes,
+    // horizontal divider). `initialRatio` is the starting flex
+    // proportion of the first pane (0.0..1.0); 0.5 = even split.
+    //
+    //   Element.SplitContainer("row", 0.3)
+    //       .AddChild(Element.Stack()      // first pane (left)
+    //           .AddChild(Element.TreeView()...))
+    //       .AddChild(Element.Stack()      // second pane (right)
+    //           .AddChild(...))
+    //
+    // The wrapper renders as
+    //   <div class=amc-split amc-split-row>
+    //     <div class=amc-split-pane>child[0]</div>
+    //     <div class=amc-split-divider></div>
+    //     <div class=amc-split-pane>child[1]</div>
+    //   </div>
+    // — the divider is drag-resizable via the bridge's pointer
+    // handlers. Children beyond the second are ignored (use a
+    // nested SplitContainer for three+ panes).
+    public static Element SplitContainer(orientation: string, initialRatio: int) {
+        let e: Element = new Element("__splitcontainer__")
+        var orient: string = "row"
+        if (orientation == "column") {
+            orient = "column"
+        }
+        e.Class("amc-split amc-split-" + orient)
+        e.Attr("data-orient", orient)
+        // initialRatio is passed as an int 0..100 to avoid float
+        // formatting in AM; e.g. 30 means 30% / 70% split.
+        var ratio: int = initialRatio
+        if (ratio < 5)  { ratio = 5 }
+        if (ratio > 95) { ratio = 95 }
+        e.Attr("data-ratio", String_FromInt(ratio))
+        return e
+    }
+
+    // ── ContextMenu (v0.0.8) ──────────────────────────────
+    //
+    // Right-click anywhere on a target element to open a menu
+    // anchored at the cursor. Equivalent to WinForms'
+    // ContextMenuStrip. Same MenuOption / MenuSeparator builders
+    // populate it.
+    //
+    //   let cm = Element.ContextMenu("workspace")
+    //       .AddChild(Element.MenuOption("Cut", "amc_cut"))
+    //       .AddChild(Element.MenuOption("Copy", "amc_copy"))
+    //       .AddChild(Element.MenuSeparator())
+    //       .AddChild(Element.MenuOption("Paste", "amc_paste"))
+    //
+    //   Element.Div().Id("workspace").Class("amc-ctx-target")
+    //       .AddChild(cm)
+    //       .AddChild( … the actual content … )
+    //
+    // The ContextMenu is initially hidden via `position:fixed;
+    // display:none`. The auto-injected click-outside bridge
+    // shows it on `contextmenu` events on `.amc-ctx-target`
+    // ancestors, and hides it on subsequent click / Escape.
+    public static Element ContextMenu(forId: string) {
+        let e: Element = new Element("div")
+        return e.Class("amc-ctxmenu").Attr("data-ctx-for", forId)
+    }
 }
 
 // ─── Page ──────────────────────────────────────────────────
@@ -1661,6 +1826,30 @@ public class Page {
         c = c + ".amc-treenode>*:not(summary){padding-left:18px}"
         c = c + ".amc-treeleaf{padding:2px 4px 2px 22px;border-radius:2px;cursor:default}"
         c = c + ".amc-treeleaf:hover{background:var(--amc-surface)}"
+        // MenuBar (v0.0.8) — top app menu strip, HTML/CSS only.
+        c = c + "nav.amc-menubar{display:flex;flex-direction:row;background:var(--amc-surface);border-bottom:1px solid var(--amc-border);padding:0 4px;font-size:13px;align-items:stretch}"
+        c = c + "nav.amc-menubar>.amc-menu{position:relative}"
+        c = c + "nav.amc-menubar>.amc-menu>.amc-menu-label{padding:6px 12px;cursor:pointer;list-style:none;color:var(--amc-fg);user-select:none}"
+        c = c + "nav.amc-menubar>.amc-menu>.amc-menu-label::-webkit-details-marker{display:none}"
+        c = c + "nav.amc-menubar>.amc-menu[open]>.amc-menu-label{background:var(--amc-bg)}"
+        c = c + "nav.amc-menubar>.amc-menu>.amc-menu-label:hover{background:var(--amc-bg)}"
+        c = c + "nav.amc-menubar>.amc-menu>.amc-menu-popup{position:absolute;top:100%;left:0;min-width:180px;background:var(--amc-bg);border:1px solid var(--amc-border);border-radius:var(--amc-radius);box-shadow:0 4px 16px rgba(0,0,0,0.3);padding:4px 0;z-index:100;display:flex;flex-direction:column;align-items:stretch}"
+        c = c + ".amc-menu-item{padding:6px 16px;text-align:left;border:none;background:transparent;color:var(--amc-fg);cursor:pointer;font:inherit;border-radius:0;min-width:0}"
+        c = c + ".amc-menu-item:hover{background:var(--amc-accent);color:#fff}"
+        c = c + "hr.amc-menu-sep{border:none;border-top:1px solid var(--amc-border);margin:4px 0}"
+        // ContextMenu — same look as MenuBar dropdown but
+        // position:fixed at the cursor position. Hidden by
+        // default; the bridge injects 'display:flex' + top/left
+        // at contextmenu event.
+        c = c + ".amc-ctxmenu{position:fixed;display:none;min-width:160px;background:var(--amc-bg);border:1px solid var(--amc-border);border-radius:var(--amc-radius);box-shadow:0 4px 16px rgba(0,0,0,0.3);padding:4px 0;z-index:1000;flex-direction:column;align-items:stretch}"
+        // SplitContainer (v0.0.8) — two-pane resizable container.
+        c = c + ".amc-split{display:flex;width:100%;height:100%;min-height:0;min-width:0}"
+        c = c + ".amc-split-row{flex-direction:row}"
+        c = c + ".amc-split-column{flex-direction:column}"
+        c = c + ".amc-split>.amc-split-pane{overflow:auto;min-width:0;min-height:0}"
+        c = c + ".amc-split-row>.amc-split-divider{width:6px;cursor:col-resize;background:var(--amc-border);flex:0 0 6px}"
+        c = c + ".amc-split-column>.amc-split-divider{height:6px;cursor:row-resize;background:var(--amc-border);flex:0 0 6px}"
+        c = c + ".amc-split>.amc-split-divider:hover{background:var(--amc-accent)}"
         return c
     }
 
@@ -1757,6 +1946,57 @@ public class Page {
         if (e.Tag == "__raw__") {
             return e.Text
         }
+        // Pseudo-tag for Element.MenuItem(label) — expand into
+        // <details class=amc-menu><summary>label</summary>
+        // <div class=amc-menu-popup>children</div></details>
+        // so the user's AddChild(MenuOption/Separator) lands in
+        // the popup automatically.
+        if (e.Tag == "__menuitem__") {
+            var m: string = "<details class=\"amc-menu\">"
+            m = m + "<summary class=\"amc-menu-label\">" + Html.Escape(e.Text) + "</summary>"
+            m = m + "<div class=\"amc-menu-popup\">"
+            let nm: int = e.Children.Count()
+            for i in 0..nm {
+                m = m + this.RenderElement(e.Children.Get(i))
+            }
+            m = m + "</div></details>"
+            return m
+        }
+        // Pseudo-tag for Element.SplitContainer — wraps the first
+        // two children in <div class=amc-split-pane> sections
+        // separated by a <div class=amc-split-divider>. Extra
+        // children are ignored (use nested SplitContainers).
+        if (e.Tag == "__splitcontainer__") {
+            var orient: string = "row"
+            var ratio:  string = "50"
+            let nak: int = e.AttrKeys.Count()
+            for ai in 0..nak {
+                if (e.AttrKeys.Get(ai) == "data-orient") {
+                    orient = e.AttrVals.Get(ai)
+                }
+                if (e.AttrKeys.Get(ai) == "data-ratio") {
+                    ratio = e.AttrVals.Get(ai)
+                }
+            }
+            var split: string = "<div class=\"amc-split amc-split-" + orient + "\" data-orient=\"" + orient + "\" data-ratio=\"" + ratio + "\">"
+            let nsc: int = e.Children.Count()
+            // Pane 1
+            split = split + "<div class=\"amc-split-pane amc-split-pane-1\" style=\"flex:" + ratio + "\">"
+            if (nsc >= 1) {
+                split = split + this.RenderElement(e.Children.Get(0))
+            }
+            split = split + "</div>"
+            // Divider
+            split = split + "<div class=\"amc-split-divider\"></div>"
+            // Pane 2
+            let other: int = 100 - String_ToInt(ratio)
+            split = split + "<div class=\"amc-split-pane amc-split-pane-2\" style=\"flex:" + String_FromInt(other) + "\">"
+            if (nsc >= 2) {
+                split = split + this.RenderElement(e.Children.Get(1))
+            }
+            split = split + "</div></div>"
+            return split
+        }
         var s: string = "<" + e.Tag
         let nk: int = e.AttrKeys.Count()
         for i in 0..nk {
@@ -1840,6 +2080,18 @@ public class Page {
         // (querySelector at click time, not render time) so targets
         // injected after Render still resolve.
         initJs = initJs + "window.__amc_route=function(p,id){Promise.resolve(p).then(function(r){var el=document.getElementById(id);if(!el)return;try{el.textContent=JSON.stringify(JSON.parse(r),null,2);}catch(e){el.textContent=r;}});};"
+        // v0.0.8 — menu bridges. The MenuBar uses native <details>
+        // for toggle; click anywhere outside an open menu closes it.
+        // ContextMenu opens on right-click on .amc-ctx-target
+        // elements and closes on outside click / Escape.
+        initJs = initJs + "document.addEventListener('click',function(e){document.querySelectorAll('nav.amc-menubar>details.amc-menu[open]').forEach(function(d){if(!d.contains(e.target))d.open=false;});document.querySelectorAll('.amc-ctxmenu').forEach(function(m){if(m.style.display==='flex'&&!m.contains(e.target))m.style.display='none';});});"
+        initJs = initJs + "document.addEventListener('contextmenu',function(e){var t=e.target;while(t&&!(t.classList&&t.classList.contains('amc-ctx-target'))){t=t.parentElement;}if(!t)return;var m=t.querySelector('.amc-ctxmenu');if(!m)return;e.preventDefault();m.style.display='flex';m.style.top=e.clientY+'px';m.style.left=e.clientX+'px';});"
+        initJs = initJs + "document.addEventListener('keydown',function(e){if(e.key==='Escape'){document.querySelectorAll('nav.amc-menubar>details.amc-menu[open]').forEach(function(d){d.open=false;});document.querySelectorAll('.amc-ctxmenu').forEach(function(m){m.style.display='none';});}});"
+        // v0.0.8 — SplitContainer drag. Pointer-down on a
+        // divider starts a drag; pointer-move adjusts the two
+        // panes' flex grow values according to the cursor's
+        // position relative to the container's bounding rect.
+        initJs = initJs + "document.addEventListener('pointerdown',function(e){if(!e.target.classList||!e.target.classList.contains('amc-split-divider'))return;var split=e.target.parentElement;var orient=split.getAttribute('data-orient')||'row';var p1=split.querySelector('.amc-split-pane-1');var p2=split.querySelector('.amc-split-pane-2');if(!p1||!p2)return;e.preventDefault();var rect=split.getBoundingClientRect();function update(ev){var pos,size;if(orient==='row'){pos=ev.clientX-rect.left;size=rect.width;}else{pos=ev.clientY-rect.top;size=rect.height;}var pct=Math.max(5,Math.min(95,Math.round(pos*100/size)));p1.style.flex=pct;p2.style.flex=(100-pct);}function up(){document.removeEventListener('pointermove',update);document.removeEventListener('pointerup',up);}document.addEventListener('pointermove',update);document.addEventListener('pointerup',up);});"
         // External link routing happens via the inline `onclick`
         // attribute emitted by Element.Link — direct, no global
         // event delegate (so no race with the webview's native
