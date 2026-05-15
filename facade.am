@@ -498,6 +498,7 @@ public class Page {
     public ExtraCss:       List<string>   // extra stylesheets appended after the baseline
     public UseBaseline:    bool           // inject the baseline <style> in <head>?
     public ThemeMode:      string         // "auto" | "light" | "dark" (controls <html data-theme>)
+    public LockChrome:     bool           // block right-click menu + F5/Ctrl+R/Cmd+R reloads?
 
     public Page() {
         this.Title          = ""
@@ -509,6 +510,7 @@ public class Page {
         this.ExtraCss       = new List<string>()
         this.UseBaseline    = true
         this.ThemeMode      = "auto"
+        this.LockChrome     = true
     }
 
     public static Page New() {
@@ -574,6 +576,21 @@ public class Page {
             r = (code_string)(p ? p : "light");
         }
         return r
+    }
+
+    // Re-enable the webview's native context menu and the reload
+    // hotkeys (F5, Ctrl+R / Cmd+R, Ctrl+Shift+R / Cmd+Shift+R).
+    // OFF by default because Page.ApplyTo loads the document via
+    // Window.SetHtml — there is no underlying URL to reload to, so
+    // a right-click → Reload leaves the user staring at a blank
+    // page until the app is restarted. Apps that navigate to real
+    // URLs (Window.Navigate) and want the standard browser chrome
+    // can opt back in:
+    //
+    //   Page.New().AllowBrowserDefaults() ...
+    public Page AllowBrowserDefaults() {
+        this.LockChrome = false
+        return this
     }
 
     // Resolve the effective theme for this render. "auto" defers to
@@ -706,17 +723,34 @@ public class Page {
         return s
     }
 
-    // Push the page into a window. Injects the form-collect bridge,
-    // sets the HTML, registers each OnClick handler via Window.Bind.
+    // Push the page into a window. Injects the form-collect bridge
+    // (and the chrome-lockdown guard unless AllowBrowserDefaults()
+    // was called), sets the HTML, then registers each OnClick
+    // handler via Window.Bind.
     //
-    // The bridge (`window.__amc_collect`) walks every input/select/
-    // textarea with a `name` attribute and returns a plain object
-    // whose keys are the names and values are the field values
-    // (booleans for checkboxes; selected `value` for radio groups).
-    // Each OnClick onclick attribute stringifies that object and
-    // passes it as the single argument to the bound handler.
+    // The form bridge (`window.__amc_collect`) walks every input/
+    // select/textarea with a `name` attribute and returns a plain
+    // object whose keys are the names and values are the field
+    // values (booleans for checkboxes; selected `value` for radio
+    // groups). Each OnClick onclick attribute stringifies that
+    // object and passes it as the single argument to the bound
+    // handler.
+    //
+    // The chrome guard blocks the webview's native context menu and
+    // the reload hotkeys (F5, Ctrl+R, Cmd+R, plus the shifted hard-
+    // reload variants). Reasons:
+    //   - The page is loaded via SetHtml, not a URL — reloading
+    //     ends up at about:blank and the app is stuck.
+    //   - Most productive desktop apps (VS Code, Slack, Tauri
+    //     defaults) hide the native browser chrome for the same
+    //     reason.
     public void ApplyTo(win: Window) {
-        win.Init("window.__amc_collect=function(){var o={};document.querySelectorAll('input[name],select[name],textarea[name]').forEach(function(el){var n=el.getAttribute('name');if(el.type==='checkbox'){o[n]=el.checked;}else if(el.type==='radio'){if(el.checked){o[n]=el.value;}}else{o[n]=el.value;}});return o;};")
+        var initJs: string = "window.__amc_collect=function(){var o={};document.querySelectorAll('input[name],select[name],textarea[name]').forEach(function(el){var n=el.getAttribute('name');if(el.type==='checkbox'){o[n]=el.checked;}else if(el.type==='radio'){if(el.checked){o[n]=el.value;}}else{o[n]=el.value;}});return o;};"
+        if (this.LockChrome) {
+            initJs = initJs + "document.addEventListener('contextmenu',function(e){e.preventDefault();},true);"
+            initJs = initJs + "document.addEventListener('keydown',function(e){var k=e.key;var m=e.ctrlKey||e.metaKey;if(k==='F5'){e.preventDefault();return;}if(m&&(k==='r'||k==='R')){e.preventDefault();return;}},true);"
+        }
+        win.Init(initJs)
         let html: string = this.Render()
         win.SetHtml(html)
         let n: int = this.BindNames.Count()
