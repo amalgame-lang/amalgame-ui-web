@@ -2,7 +2,81 @@
 
 All notable changes to `amalgame-ui-web` are recorded here.
 
-## [Unreleased] — v0.0.6-dev
+## [Unreleased] — v0.0.7-dev
+
+### Added — `Form` + `Application.Run`
+
+WinForms-style entry point. `Form` is a fluent value-holder that
+bundles title + size + body + lifecycle; `Application.Run(form)`
+expands it into the full `Window + Page + ApplyTo + Run + Destroy`
+boilerplate.
+
+```amalgame
+let f: Form = new Form("My App", 800, 600)
+f.SetBody(Element.Stack()
+    .AddChild(Element.Heading("Welcome"))
+    .AddChild(Element.Button("Quit").OnClick((req) => "")))
+Application.Run(f)
+```
+
+Plain value rather than a base class to subclass — AM's static
+dispatch makes virtual overrides in a parent class unreliable.
+`OnLoad(handler)` registers a closure to fire after the window
+renders (use for late `Window.Bind` calls); `SetTheme(mode)`
+forwards to `Page.SetTheme`; `SetDebug(true)` opens the window
+with DevTools enabled.
+
+A `tests/spike_app_form.am` smoke test mirrors the v0.0.5
+spike_form.am with the new shorter shape.
+
+### Added — `TreeView` builder
+
+Hierarchical tree of nodes built from HTML5 `<details>`/`<summary>`
+primitives — native expand/collapse + keyboard navigation for free.
+
+```amalgame
+Element.TreeView()
+    .AddChild(Element.TreeNode("src")
+        .AddChild(Element.TreeNode("parser")
+            .AddChild(Element.TreeLeaf("ast.am"))
+            .AddChild(Element.TreeLeaf("parser.am")))
+        .AddChild(Element.TreeLeaf("main.am")))
+    .AddChild(Element.TreeLeaf("README.md"))
+```
+
+Three builders: `TreeView()` for the root, `TreeNode(caption)` for
+folder-like expandable nodes, `TreeLeaf(caption)` for terminal
+items. Pass `.Attr("open","open")` on a `TreeNode` to render it
+expanded by default.
+
+Baseline CSS themes the rotating ▶ caret, hover bg, and 18px
+nested indent — all via `--amc-*` variables.
+
+### Added — `Dialog.OpenFile` / `Dialog.SaveFile`
+
+File pickers leveraging the browser's native UI:
+
+- `Dialog.OpenFile(win, accept, handler)` — triggers a hidden
+  `<input type=file>` click. The handler receives the chosen
+  filename (or `""` on cancel). `accept` filters the dialog
+  (e.g. `".png,.jpg"` or `"image/*"`).
+- `Dialog.SaveFile(win, filename, content, mimeType, handler)` —
+  builds a `Blob` from `content`, wires it to a download anchor,
+  and triggers the OS Save-As dialog. The handler fires with
+  `"ok"` once the download is offered.
+
+Browser sandbox limits: `OpenFile` exposes only the filename,
+not the full path or content (file content via FileReader is on
+the roadmap for v0.0.8). `SaveFile` succeeds as soon as the
+download is initiated — there's no way to know if the user
+accepted the Save-As dialog or where the file landed.
+
+### Gallery
+
+Added a 6th tab "v0.0.7" to `spike_gallery` exercising the
+TreeView (nested project layout) + the two file dialogs.
+
+## [v0.0.6] — 2026-05-16
 
 ### Added — `Dialog` class (modal message boxes)
 
