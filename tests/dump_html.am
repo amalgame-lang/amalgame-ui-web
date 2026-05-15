@@ -83,7 +83,7 @@ class Program {
                 .AddChild(Element.CheckedItem("perms", "read",  "Read"))
                 .AddChild(Element.CheckedItem("perms", "write", "Write"))
                 .AddChild(Element.CheckedItem("perms", "exec",  "Execute")))
-            .AddChild(Element.ListView(headers)
+            .AddChild(Element.ListView(headers, "")
                 .AddChild(Element.ListViewRow(row1))
                 .AddChild(Element.ListViewRow(row2)))
             .AddChild(Element.Iframe("https://example.com").Size(0, 120))

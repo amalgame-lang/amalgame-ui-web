@@ -127,13 +127,19 @@ class Program {
         let row1: List<string> = ["readme.md",  "2 KB",  "today"]
         let row2: List<string> = ["facade.am", "32 KB", "10:42"]
         let row3: List<string> = ["LICENSE",   "11 KB", "yesterday"]
+        // The bodyId on ListView lets Page.AppendInner target the
+        // tbody so the "Add row" button below grows the table
+        // without re-rendering the whole page.
         let tabular: Element = Element.Stack()
             .AddChild(Element.Heading("Tables, links, embed, events"))
-            .AddChild(Element.GroupBox("ListView (table)")
-                .AddChild(Element.ListView(fileHeaders)
+            .AddChild(Element.GroupBox("ListView (table) — partial-DOM patching")
+                .AddChild(Element.ListView(fileHeaders, "files-body")
                     .AddChild(Element.ListViewRow(row1))
                     .AddChild(Element.ListViewRow(row2))
-                    .AddChild(Element.ListViewRow(row3))))
+                    .AddChild(Element.ListViewRow(row3)))
+                .AddChild(Element.Row()
+                    .AddChild(Element.Button("Add row").Id("add-row-btn"))
+                    .AddChild(Element.Label("→  appends a new row via Page.AppendInner — no full re-render"))))
             .AddChild(Element.GroupBox("LinkLabel + PictureBox")
                 .AddChild(Element.Row()
                     .AddChild(Element.Link("Open the Amalgame language site", "https://example.com"))
@@ -152,8 +158,13 @@ class Program {
                 .AddChild(Element.Pre("(focus / type to see events)").Id("out-events").Size(0, 90)))
 
         // ── Compose the tabbed page ──────────────────────────
+        // FillViewport() pins the body to 100vh — the TabControl
+        // grows to fill remaining vertical space and scrolls
+        // internally, so we don't get a window-level scrollbar
+        // when one tab's content is taller than the viewport.
         let page: Page = Page.New()
             .SetTitle("amalgame-ui-web — gallery")
+            .FillViewport()
             .SetBody(
                 Element.Stack()
                     .AddChild(Element.Heading("amalgame-ui-web v0.0.5 — widget gallery"))
@@ -173,6 +184,25 @@ class Program {
             )
 
         page.ApplyTo(win)
+
+        // Wire the "Add row" button AFTER ApplyTo so we can use
+        // Page.AppendInner — it captures `page` and `win` from the
+        // closure. Each click appends a fresh row to the ListView
+        // body, demonstrating partial-DOM patching without
+        // re-rendering anything else on the page.
+        var addCount: int = 0
+        win.Bind("amc_addrow", (req: string) => {
+            addCount = addCount + 1
+            let r: List<string> = [
+                "new-" + String_FromInt(addCount) + ".txt",
+                "0 KB",
+                "just now"
+            ]
+            page.AppendInner(win, "files-body", Element.ListViewRow(r))
+            return "true"
+        })
+        win.Eval("var b=document.getElementById('add-row-btn');if(b)b.onclick=function(){window.amc_addrow('');};")
+
         win.Run()
         win.Destroy()
     }
