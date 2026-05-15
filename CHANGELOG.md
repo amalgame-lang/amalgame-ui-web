@@ -78,13 +78,76 @@ pickers and accessibility:
   and matches what `amc new --template ui-web-form` will scaffold
   once amc v0.8.14 ships.
 
+### Added — Event-table refactor + WinForms property surface
+
+- **Generic event binder `Element.On(eventName, handler)`** —
+  attach any DOM event ("click", "change", "wheel", "drop", custom
+  names). Internal bookkeeping is a parallel
+  `(event, handler, resultTarget)` list, so multiple events can
+  coexist on a single Element without per-event boilerplate.
+- **WinForms-aligned event setters** as sugar over `.On(...)` —
+  `.OnClick`, `.OnDblClick`, `.OnChange`, `.OnFocus`, `.OnBlur`,
+  `.OnMouseEnter`, `.OnMouseLeave`, `.OnKeyDown`, `.OnKeyUp`.
+  `OnChange` registers both `change` + `input` for text inputs and
+  textareas (live update on every keystroke).
+- **WinForms-style property setters** on every Element:
+  `.Visible(bool)`, `.Enabled(bool)`, `.Tooltip(text)`,
+  `.TabIndex(n)`, `.ForeColor(css)`, `.BackColor(css)`,
+  `.Font(family, sizePx)`, `.DataTag(payload)`.
+- **`Element.Raw(html)`** — escape hatch for one-off raw HTML
+  injection (SVG fragments, JS-lib mount markup, etc.).
+
+### Added — Completing the WinForms Common Controls
+
+Widgets ticking off the remaining 🟢 rows in
+[`docs/winforms-mapping.md`](docs/winforms-mapping.md):
+
+- **`Element.PictureBox(src)`** — alias for `Image(src)`.
+- **`Element.Panel()`** — alias for `Div()`.
+- **`Element.GroupBox(title)`** — `<fieldset><legend>`.
+- **`Element.Flow(direction)`** — flex with wrap (FlowLayoutPanel).
+- **`Element.ToolStrip()`** — themed button row.
+- **`Element.StatusStrip()`** — fixed-bottom status footer.
+- **`Element.Iframe(url)`** — embed (WebBrowser).
+- **`Element.MaskedTextBox(name, pattern, inputmode)`** —
+  HTML5 `pattern` + `inputmode` (phone, zip, decimal…).
+- **`Element.CheckedListBox(name)`** + **`Element.CheckedItem(name, value, label)`** —
+  multi-select with checkboxes.
+- **`Element.ListView(headers)`** + **`Element.ListViewRow(values)`** —
+  table-mode ListView with header row.
+- **`Element.TabControl(groupName)`** + **`Element.Tab(group, id, label, body)`** —
+  pure-CSS tabs (radio-button sibling-selector pattern, no JS).
+
+### Added — Baseline CSS themed rules
+
+The baseline stylesheet grew rules for `fieldset.amc-groupbox`,
+`footer.amc-statusstrip`, `.amc-toolstrip`, `iframe.amc-iframe`,
+`table.amc-listview`, `ul.amc-checkedlistbox`, and `.amc-tabs`.
+All colors reference `--amc-*` variables, so light/dark flip
+remains automatic. Confirmed on Linux (WebKitGTK 4.1) — macOS /
+Windows parity assumed but not yet smoke-tested.
+
+### Added — Architecture documentation
+
+Two reference docs under `docs/`:
+- [`winforms-mapping.md`](docs/winforms-mapping.md) — full
+  WinForms toolbox cross-reference with shipping status per
+  release.
+- [`architecture.md`](docs/architecture.md) — three-level model
+  (Element / Component / Form), event-table model, CSS/JS
+  injection layering, and four canonical extension scenarios.
+
 ### Known issues
 
-- **`Element.AbsoluteContainer().Size(w, h).AddChild(…)`** trips
-  an amc type-inference glitch and emits `i64_AddChild`. Workaround:
-  drop the `.Size(...)` (anchor sizing via `.Style("width:…;height:…")`
-  on the container or its children) or stage through a `let`. Fix
-  tracked for an amc patch release; the underlying facade is fine.
+- **amc chain-length quadratic** — building a single fluent
+  `.AddChild(...)`-chain with ~24+ links sends amc's type
+  inference into a non-terminating recursion. Workaround: split
+  the body into `let block: Element = Element.Stack()...`
+  intermediates (see `tests/dump_html.am`). Tracked as an amc fix
+  (memoize `InferTypeFromExpr` by node identity).
+- **List literals (`["a", "b"]`)** are not yet parsed by amc;
+  pass `List<string>` built via `new List<string>(); list.Add(…)`.
+  Tracked as an amc parser feature.
 
 ## [v0.0.4] — 2026-05-15
 
