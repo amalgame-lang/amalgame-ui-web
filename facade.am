@@ -551,9 +551,22 @@ public class Element {
     // Set an HTML attribute. The `style` name is special-cased so
     // it routes through Style() and accumulates instead of producing
     // duplicate attributes that HTML5 parsers silently drop.
+    // For all other attribute names, repeated calls REPLACE the
+    // previous value rather than appending — so `.Class("foo")`
+    // followed by `.Class("bar")` yields `class="bar"`, not two
+    // class attrs (HTML5 picks the first and drops the rest).
+    // Multiple classes go in a single space-separated string:
+    // `.Class("amc-fill-child highlight")`.
     public Element Attr(name: string, value: string) {
         if (name == "style") {
             return this.Style(value)
+        }
+        let n: int = this.AttrKeys.Count()
+        for i in 0..n {
+            if (this.AttrKeys.Get(i) == name) {
+                this.AttrVals.Set(i, value)
+                return this
+            }
         }
         this.AttrKeys.Add(name)
         this.AttrVals.Add(value)
@@ -1384,9 +1397,35 @@ public class Element {
     // `.Attr("onclick", "...")` if the action is pure JS.)
 
     // Horizontal <nav> container styled as a top app menubar.
+    //
+    // Mode selection — common (HTML/CSS, default) vs native
+    // (OS menubar via Win32 / NSMenu / GtkMenuBar):
+    //
+    //   Element.MenuBar()                // common (default)
+    //   Element.MenuBar().UseNative(true)  // OS-native (v0.1.0)
+    //
+    // Until the native bridge lands in v0.1.0, .UseNative(true)
+    // logs a warning at render time and falls back to the common
+    // HTML render so the app keeps working.  The .UseNative
+    // attribute is preserved on the DOM as `data-mode="native"`
+    // so the future bridge can pick it up without re-touching
+    // the AM-side code.
     public static Element MenuBar() {
         let e: Element = new Element("nav")
-        return e.Class("amc-menubar")
+        return e.Class("amc-menubar").Attr("data-mode", "common")
+    }
+
+    // Toggle between the common HTML/CSS menubar (default) and the
+    // OS-native menubar. The native path is reserved for v0.1.0;
+    // for now `UseNative(true)` is honored as a marker only —
+    // rendering stays HTML. The flag round-trips via `data-mode`
+    // so apps that opt in now will switch to native automatically
+    // when v0.1.0 ships the C bridge.
+    public Element UseNative(b: bool) {
+        if (b) {
+            return this.Attr("data-mode", "native")
+        }
+        return this.Attr("data-mode", "common")
     }
 
     // One top-level menu (label + dropdown). The label is stored
@@ -1511,6 +1550,7 @@ public class Page {
     public ThemeMode:      string         // "auto" | "light" | "dark" (controls <html data-theme>)
     public LockChrome:     bool           // block right-click menu + F5/Ctrl+R/Cmd+R reloads?
     public FillFlag:       bool           // body fills the viewport (flex col, root child scrolls)
+    public FullBleedFlag:  bool           // body padding:0 (IDE-shell layouts)
 
     public Page() {
         this.Title          = ""
@@ -1524,6 +1564,7 @@ public class Page {
         this.ThemeMode      = "auto"
         this.LockChrome     = true
         this.FillFlag       = true
+        this.FullBleedFlag  = false
     }
 
     public static Page New() {
@@ -1641,6 +1682,18 @@ public class Page {
         return this
     }
 
+    // Strip the body's 16px padding so the page content can sit
+    // flush against the viewport edges. Use this for IDE-style
+    // shells (MenuBar at top, content fills, StatusStrip at
+    // bottom) where the framing breath is built into the inner
+    // widgets themselves. The .amc-fullbleed class is applied to
+    // <body> at render time; it overrides the baseline body
+    // padding via specificity.
+    public Page FullBleed() {
+        this.FullBleedFlag = true
+        return this
+    }
+
     // Resolve the effective theme for this render. "auto" defers to
     // Page.DetectOSTheme; "light"/"dark" pass through verbatim;
     // anything else is treated as "auto" so callers can't accidentally
@@ -1695,6 +1748,8 @@ public class Page {
         c = c + "body.amc-fill>*{min-height:0}"
         c = c + "body.amc-fill>*:first-child{flex:1;display:flex;flex-direction:column;min-height:0}"
         c = c + "body.amc-fill>*:first-child>*{min-height:0}"
+        // FullBleed — body padding:0 for IDE-shell layouts.
+        c = c + "body.amc-fullbleed{padding:0}"
         // Pre / Textarea : the user-facing scroll containers when
         // they sit inside a fill-viewport layout — they get a
         // sane max-height so they don't push the page.
@@ -1878,9 +1933,16 @@ public class Page {
         for i in 0..nx {
             html = html + "<link rel=\"stylesheet\" href=\"" + Html.Escape(this.ExtraCss.Get(i)) + "\">"
         }
-        var bodyTag: string = "<body>"
+        var classes: string = ""
         if (this.FillFlag) {
-            bodyTag = "<body class=\"amc-fill\">"
+            classes = classes + " amc-fill"
+        }
+        if (this.FullBleedFlag) {
+            classes = classes + " amc-fullbleed"
+        }
+        var bodyTag: string = "<body>"
+        if (String_Length(classes) > 0) {
+            bodyTag = "<body class=\"" + String_Substring(classes, 1, String_Length(classes) - 1) + "\">"
         }
         html = html + "</head>" + bodyTag
         html = html + this.RenderElement(this.Body)
