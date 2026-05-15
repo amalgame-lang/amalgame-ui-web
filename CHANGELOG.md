@@ -24,12 +24,34 @@ All notable changes to `amalgame-ui-web` are recorded here.
 
 - **Baseline stylesheet auto-injected by `Page.Render`** — a tiny
   modern reset + system fonts + form-widget polish, themed via
-  CSS variables (`--amc-bg`, `--amc-fg`, `--amc-muted`,
+  seven CSS variables (`--amc-bg`, `--amc-fg`, `--amc-muted`,
   `--amc-border`, `--amc-surface`, `--amc-accent`,
-  `--amc-radius`). The dark variant flips under
-  `@media (prefers-color-scheme: dark)`, which all modern
-  webviews (WebView2 / WKWebView / WebKitGTK) honor natively
-  from the OS theme setting.
+  `--amc-radius`). The dark variant keys off `[data-theme=dark]`
+  on `<html>` (set by Render from the OS theme); a secondary
+  `@media (prefers-color-scheme: dark)` fallback applies when
+  callers ship their own raw HTML and skip Render.
+- **OS theme auto-detection** via the new C primitive
+  `Amalgame_UI_Web_DetectOSTheme()`:
+  - macOS: `defaults read -g AppleInterfaceStyle`
+  - Windows: `AppsUseLightTheme` registry DWORD
+  - Linux: `gsettings ... color-scheme` (GNOME 42+) + `GTK_THEME`
+    `:dark` substring fallback
+  - Environment override: `AMALGAME_UI_THEME=dark|light` wins.
+- **GTK dark theme flip on Linux** —
+  `Amalgame_UI_Web_Create` sets
+  `GtkSettings::gtk-application-prefer-dark-theme = TRUE` when
+  the OS is in dark mode. Necessary because WebKitGTK renders
+  `<select>` popups, file dialogs, and scrollbars through native
+  GTK widgets that ignore the CSS `color-scheme` declaration.
+- `:root { color-scheme: light }` / `[data-theme=dark] { color-scheme: dark }`
+  in the baseline so the browser chrome (scrollbars, focus
+  rings, text-selection color) matches the page theme on
+  WebView2 / WKWebView.
+- **`Page.SetTheme(mode)`** — force `"light"` / `"dark"` /
+  `"auto"` (default; defers to `DetectOSTheme()`).
+- **`Page.DetectOSTheme()`** static — returns `"light"` or
+  `"dark"`. Useful when an app needs to know the OS theme for
+  reasons other than CSS (e.g. picking matching iconography).
 - **`Page.SetStylesheet(url)`** — use a single external
   stylesheet *instead of* the baseline (e.g.
   `file:///abs/path/style.css`, an `https://…` URL, or a
@@ -43,6 +65,8 @@ All notable changes to `amalgame-ui-web` are recorded here.
 - `<meta name="viewport" content="width=device-width,initial-scale=1">`
   added to every rendered page so HiDPI scales correctly inside
   the webview.
+- `<html data-theme="…">` written on every render so user CSS
+  can theme off the same attribute as the baseline.
 
 ### Changed
 

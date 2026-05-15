@@ -81,10 +81,14 @@ if [ ! -f runtime/Amalgame_UI_Web.o ] || \
    [ runtime/Amalgame_UI_Web.h -nt runtime/Amalgame_UI_Web.o ] || \
    [ runtime/Amalgame_UI_Web.c -nt runtime/Amalgame_UI_Web.o ]; then
     echo "Building C glue layer…"
+    # Pull in webkitgtk + gtk-3 cflags on Linux so the GTK dark-theme
+    # flip in Amalgame_UI_Web_Create can find <gtk/gtk.h>. macOS and
+    # Windows don't need this — those branches use OS APIs only.
     gcc -c -O2 -DWEBVIEW_STATIC \
         -I runtime \
         -I runtime/vendor/webview \
         -I "$AMC_DIR/runtime" \
+        $(pkg-config --cflags "$WEBKIT_PC") \
         runtime/Amalgame_UI_Web.c \
         -o runtime/Amalgame_UI_Web.o
 fi
