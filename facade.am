@@ -822,20 +822,39 @@ public class Element {
     }
 
     // Numeric spinbox — equivalent to WinForms' `NumericUpDown`.
-    // The form payload reports a JSON number (not a string) when
-    // the input parses; an empty input becomes the empty string.
-    // `min` / `max` / `step` accept 0 to leave each unset.
+    // Composite widget: a `<input type=number>` flanked by two
+    // custom +/− buttons that call `stepUp` / `stepDown` on the
+    // input. We render the buttons ourselves because WebKitGTK
+    // doesn't expose the native spinner pseudo-elements
+    // (unlike Chrome/Safari/Edge), and the empty hover-on hint
+    // was confusing on Linux.
+    //
+    // Form payload reports the input value as usual (`<input
+    // type=number>`). `min` / `max` / `step` accept 0 to leave
+    // each unset.
     public static Element Number(name: string, min: int, max: int, step: int) {
-        let e: Element = new Element("input")
-        e.Attr("type", "number").Bind(name)
+        let wrap: Element = new Element("div")
+        wrap.Class("amc-numericupdown")
+        let inputId: string = "amc-num-" + name
+        let inp: Element = new Element("input")
+        inp.Attr("type", "number").Attr("id", inputId).Bind(name)
         if (min != 0 || max != 0) {
-            e.Attr("min", String_FromInt(min))
-            e.Attr("max", String_FromInt(max))
+            inp.Attr("min", String_FromInt(min))
+            inp.Attr("max", String_FromInt(max))
         }
         if (step > 0) {
-            e.Attr("step", String_FromInt(step))
+            inp.Attr("step", String_FromInt(step))
         }
-        return e
+        let dec: Element = new Element("button")
+        dec.SetText("−").Class("amc-num-btn").Attr("type", "button")
+        dec.Attr("onclick", "(function(){var i=document.getElementById('" + inputId + "');i.stepDown(1);i.dispatchEvent(new Event('input',{bubbles:true}));i.dispatchEvent(new Event('change',{bubbles:true}));})()")
+        let inc: Element = new Element("button")
+        inc.SetText("+").Class("amc-num-btn").Attr("type", "button")
+        inc.Attr("onclick", "(function(){var i=document.getElementById('" + inputId + "');i.stepUp(1);i.dispatchEvent(new Event('input',{bubbles:true}));i.dispatchEvent(new Event('change',{bubbles:true}));})()")
+        wrap.Children.Add(dec)
+        wrap.Children.Add(inp)
+        wrap.Children.Add(inc)
+        return wrap
     }
 
     // Range slider — equivalent to WinForms' `TrackBar`. Form
@@ -1338,16 +1357,22 @@ public class Page {
         c = c + "input[type=range],input[type=checkbox],input[type=radio]{padding:0;border:none;background:transparent;outline:none;width:auto}"
         c = c + "input[type=range]{width:200px;accent-color:var(--amc-accent)}"
         c = c + "input[type=checkbox],input[type=radio]{accent-color:var(--amc-accent);width:16px;height:16px}"
-        // <input type=number> hover-jitter fix. Two things were
-        // happening on WebKit / WebKitGTK: (1) the spin buttons
-        // hide-then-show on hover, eating ~16px of padding-right;
-        // (2) the spin button height auto-fits its content, growing
-        // the input box vertically a few pixels — that bubbles up
-        // the flex parent and re-flows everything above it.
-        // Pin the input height + always-show the spinners + fix
-        // their height to the parent so neither dimension flexes.
+        // <input type=number> hover-jitter fix + composite spinner.
+        // WebKitGTK doesn't render the native ::-webkit-inner-spin-
+        // button at all (Chrome / WebKit-on-macOS do), so we ship
+        // explicit +/− buttons via the Element.Number composite.
+        // Pin the input height so the bare input doesn't jitter
+        // either; hide any residual native spinners on WebKit.
         c = c + "input[type=number]{height:32px;box-sizing:border-box}"
-        c = c + "input[type=number]::-webkit-inner-spin-button,input[type=number]::-webkit-outer-spin-button{opacity:1;height:100%;margin:0}"
+        c = c + "input[type=number]::-webkit-inner-spin-button,input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}"
+        c = c + ".amc-numericupdown{display:inline-flex;align-items:stretch;border-radius:var(--amc-radius);overflow:hidden;border:1px solid var(--amc-border);height:32px;background:var(--amc-bg)}"
+        c = c + ".amc-numericupdown>input[type=number]{border:none;border-radius:0;height:auto;flex:1;min-width:0;text-align:center;background:transparent}"
+        c = c + ".amc-numericupdown>input[type=number]:focus{outline:none}"
+        c = c + ".amc-numericupdown:focus-within{outline:2px solid var(--amc-accent);outline-offset:-1px}"
+        c = c + ".amc-numericupdown>button.amc-num-btn{padding:0 10px;border:none;background:var(--amc-surface);color:var(--amc-fg);cursor:pointer;font:inherit;line-height:1;border-radius:0;min-width:28px}"
+        c = c + ".amc-numericupdown>button.amc-num-btn:first-child{border-right:1px solid var(--amc-border)}"
+        c = c + ".amc-numericupdown>button.amc-num-btn:last-child{border-left:1px solid var(--amc-border)}"
+        c = c + ".amc-numericupdown>button.amc-num-btn:hover{background:var(--amc-border)}"
         // v0.0.5 — color picker: the generic input rule shrinks the
         // native swatch to ~14 px because of padding + var(--amc-bg)
         // bg. Reset to a sane size so the selected color is actually
