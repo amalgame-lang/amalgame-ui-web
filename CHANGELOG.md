@@ -2,7 +2,51 @@
 
 All notable changes to `amalgame-ui-web` are recorded here.
 
-## [Unreleased] — v0.0.5-dev
+## [Unreleased] — v0.0.6-dev
+
+### Added — `Dialog` class (modal message boxes)
+
+Equivalent to WinForms' `MessageBox.Show`. Five static entry
+points cover the common combinations of urgency + buttons:
+
+- `Dialog.Info(win, title, message, handler)` — single OK
+- `Dialog.Warning(win, title, message, handler)` — single OK with
+  warning-orange accent on the header
+- `Dialog.Error(win, title, message, handler)` — single OK with
+  red accent on the header
+- `Dialog.Confirm(win, title, message, handler)` — OK / Cancel
+- `Dialog.YesNoCancel(win, title, message, handler)` — Yes / No / Cancel
+
+Plus the lower-level `Dialog.Show(win, kind, title, message,
+buttons, handler)` if you want to mix-and-match (`kind` ∈
+{info,warning,error}, `buttons` ∈ {ok,ok-cancel,yes-no,
+yes-no-cancel}).
+
+The handler receives the clicked button's id as the `req`
+string — `"ok"`, `"cancel"`, `"yes"`, `"no"`, or `"cancel"` from
+the native Esc-key dismissal. Single-OK dialogs deliver `"ok"`
+on dismiss; pressing Esc on any dialog delivers `"cancel"`.
+
+Implementation: each call appends a `<dialog id="amc-dialog">`
+to the document body via `Window.Eval`, wires `onclick` handlers
+on the buttons that close the dialog with their id and forward
+to the bound `_amc_dialog_result` closure. The HTML `<dialog>`
+element handles the focus trap + Esc + backdrop natively.
+Single-slot for now — opening a new dialog while one is visible
+replaces the previous one. Sufficient for v0.0.6; stackable
+dialogs are a v0.0.7 candidate if real apps need them.
+
+Baseline CSS adds themed rules for `dialog.amc-dialog` (border,
+radius, shadow, body padding) + the three accent variants for
+the header. The `::backdrop` scrim is darkened to make the
+modal stand out. All colors reference `--amc-*` variables, so
+light/dark flip is automatic.
+
+`tests/spike_gallery.am` gains a "Dialogs" tab that opens each
+of the five variants and echoes the result into a `<pre>` via
+`Window.SetInnerHtml`.
+
+## [v0.0.5] — 2026-05-15
 
 ### Added — Declarative result routing
 
