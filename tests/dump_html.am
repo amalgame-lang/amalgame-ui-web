@@ -1,0 +1,28 @@
+import Amalgame.UI.Web
+
+// Dump-only helper: builds a representative Page and prints
+// Render() to stdout. Used to verify the baseline CSS, viewport
+// meta, form-field name attrs, and onclick wiring without
+// needing the webview to actually open. Run with:
+//
+//   bash tests/build_spike.sh dump_html && ./build/dump_html
+
+class Program {
+    public static void Main() {
+        let page: Page = Page.New()
+            .SetTitle("Render dump")
+            .SetBody(
+                Element.Stack()
+                    .AddChild(Element.Heading("Form"))
+                    .AddChild(Element.Input("user"))
+                    .AddChild(Element.CheckBox("newsletter"))
+                    .AddChild(Element.Select("theme")
+                        .AddChild(Element.Option("light", "Light"))
+                        .AddChild(Element.Option("dark",  "Dark")))
+                    .AddChild(Element.Radio("priority", "low"))
+                    .AddChild(Element.Radio("priority", "high"))
+                    .AddChild(Element.Button("Go").OnClick((req: string) => req))
+            )
+        Console.WriteLine(page.Render())
+    }
+}

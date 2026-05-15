@@ -4,7 +4,7 @@ All notable changes to `amalgame-ui-web` are recorded here.
 
 ## [Unreleased] — v0.0.4-dev
 
-### Added
+### Added — Form reading
 
 - **Form-field builders on `Element`** — `Textarea(name)`,
   `Select(name)`, `Option(value, label)`, `CheckBox(name)`, and
@@ -20,6 +20,30 @@ All notable changes to `amalgame-ui-web` are recorded here.
   object. The injection happens via `Window.Init` so it
   survives navigation.
 
+### Added — OS theming
+
+- **Baseline stylesheet auto-injected by `Page.Render`** — a tiny
+  modern reset + system fonts + form-widget polish, themed via
+  CSS variables (`--amc-bg`, `--amc-fg`, `--amc-muted`,
+  `--amc-border`, `--amc-surface`, `--amc-accent`,
+  `--amc-radius`). The dark variant flips under
+  `@media (prefers-color-scheme: dark)`, which all modern
+  webviews (WebView2 / WKWebView / WebKitGTK) honor natively
+  from the OS theme setting.
+- **`Page.SetStylesheet(url)`** — use a single external
+  stylesheet *instead of* the baseline (e.g.
+  `file:///abs/path/style.css`, an `https://…` URL, or a
+  `data:text/css,…` URL). Disables the baseline implicitly.
+- **`Page.AddCss(url)`** — stack additional stylesheets on top
+  of whatever is already there (baseline or custom). Multiple
+  calls layer in declaration order.
+- **`Page.NoBaseline()`** — disable the baseline entirely. Use
+  when shipping a CSS reset / framework (Tailwind, Pico) that
+  starts from a blank slate.
+- `<meta name="viewport" content="width=device-width,initial-scale=1">`
+  added to every rendered page so HiDPI scales correctly inside
+  the webview.
+
 ### Changed
 
 - **`OnClick` handlers now receive form state** — the generated
@@ -30,6 +54,13 @@ All notable changes to `amalgame-ui-web` are recorded here.
   groups emit the selected `value` (key absent if none checked).
 - `Element.Input` now uses the new `Bind(name)` helper internally
   for consistency with the other form-field builders.
+
+### Fixed
+
+- **`Page.RenderElement` no longer emits closing tags for HTML
+  void elements** (`input`, `br`, `hr`, `img`, `meta`, `link`).
+  Browsers tolerated `<input></input>` but it parsed as a stray
+  end-tag and bloated the rendered document.
 
 ### Breaking
 

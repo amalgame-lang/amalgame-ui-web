@@ -452,18 +452,24 @@ public class Element {
 // or the JS side will accumulate dead listeners.
 
 public class Page {
-    public Title:        string
-    public Body:         Element
-    public BindNames:    List<string>
-    public BindHandlers: List<Closure>
-    public Counter:      int
+    public Title:          string
+    public Body:           Element
+    public BindNames:      List<string>
+    public BindHandlers:   List<Closure>
+    public Counter:        int
+    public StylesheetUrl:  string         // primary stylesheet override
+    public ExtraCss:       List<string>   // extra stylesheets appended after the baseline
+    public UseBaseline:    bool           // inject the baseline <style> in <head>?
 
     public Page() {
-        this.Title        = ""
-        this.Body         = new Element("div")
-        this.BindNames    = new List<string>()
-        this.BindHandlers = new List<Closure>()
-        this.Counter      = 0
+        this.Title          = ""
+        this.Body           = new Element("div")
+        this.BindNames      = new List<string>()
+        this.BindHandlers   = new List<Closure>()
+        this.Counter        = 0
+        this.StylesheetUrl  = ""
+        this.ExtraCss       = new List<string>()
+        this.UseBaseline    = true
     }
 
     public static Page New() {
@@ -480,6 +486,58 @@ public class Page {
         return this
     }
 
+    // Use a single external stylesheet *instead of* the baseline.
+    // Pass a URL — `file:///abs/path/style.css`, `https://…`, or a
+    // `data:text/css,…` data URL all work. Disables the baseline
+    // implicitly; call .AddCss() if you want a stack of stylesheets.
+    public Page SetStylesheet(url: string) {
+        this.StylesheetUrl = url
+        this.UseBaseline   = false
+        return this
+    }
+
+    // Add a stylesheet on top of whatever is already there. Multiple
+    // calls layer in declaration order, after the baseline.
+    public Page AddCss(url: string) {
+        this.ExtraCss.Add(url)
+        return this
+    }
+
+    // Disable the baseline stylesheet entirely. Use when shipping a
+    // CSS reset / framework (Tailwind, Pico, custom) that starts
+    // from a blank slate.
+    public Page NoBaseline() {
+        this.UseBaseline = false
+        return this
+    }
+
+    // The baseline stylesheet — a tiny modern reset + system fonts
+    // + form widget polish, themed via CSS variables that flip on
+    // `prefers-color-scheme: dark`. Modern webviews (WebView2,
+    // WKWebView, WebKitGTK) honor that media query natively, so the
+    // page tracks the OS theme automatically.
+    //
+    // Override individual variables in your own stylesheet rather
+    // than rewriting the whole rule set:
+    //
+    //     :root { --amc-accent: #ff6b00 }
+    //
+    // Variables surface: --amc-bg, --amc-fg, --amc-muted,
+    // --amc-border, --amc-surface, --amc-accent, --amc-radius.
+    public static string BaselineCss() {
+        var c: string = ":root{--amc-bg:#fff;--amc-fg:#1a1a1a;--amc-muted:#6a6a6a;--amc-border:#d0d0d0;--amc-surface:#f5f5f5;--amc-accent:#0066cc;--amc-radius:4px}"
+        c = c + "@media(prefers-color-scheme:dark){:root{--amc-bg:#1e1e1e;--amc-fg:#e8e8e8;--amc-muted:#9a9a9a;--amc-border:#404040;--amc-surface:#2a2a2a;--amc-accent:#4a9eff}}"
+        c = c + "*{box-sizing:border-box}"
+        c = c + "body{margin:0;padding:16px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:14px;line-height:1.5;color:var(--amc-fg);background:var(--amc-bg)}"
+        c = c + "h1,h2,h3{margin:0 0 8px}p{margin:0 0 8px}"
+        c = c + "button{padding:6px 12px;border:1px solid var(--amc-border);border-radius:var(--amc-radius);background:var(--amc-surface);color:var(--amc-fg);cursor:pointer;font:inherit}"
+        c = c + "button:hover{background:var(--amc-border)}"
+        c = c + "input,select,textarea{padding:6px 8px;border:1px solid var(--amc-border);border-radius:var(--amc-radius);background:var(--amc-bg);color:var(--amc-fg);font:inherit}"
+        c = c + "input:focus,select:focus,textarea:focus{outline:2px solid var(--amc-accent);outline-offset:-1px}"
+        c = c + "pre{padding:8px;background:var(--amc-surface);border-radius:var(--amc-radius);overflow:auto;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--amc-fg)}"
+        return c
+    }
+
     // Render the page to a complete HTML document and accumulate
     // bindings for every OnClick handler in the tree.
     public string Render() {
@@ -487,11 +545,34 @@ public class Page {
         this.BindHandlers = new List<Closure>()
         this.Counter      = 0
         var html: string = "<!DOCTYPE html><html><head><meta charset=utf-8>"
+        html = html + "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
         html = html + "<title>" + Html.Escape(this.Title) + "</title>"
+        if (this.UseBaseline) {
+            html = html + "<style>" + Page.BaselineCss() + "</style>"
+        }
+        if (String_Length(this.StylesheetUrl) > 0) {
+            html = html + "<link rel=\"stylesheet\" href=\"" + Html.Escape(this.StylesheetUrl) + "\">"
+        }
+        let nx: int = this.ExtraCss.Count()
+        for i in 0..nx {
+            html = html + "<link rel=\"stylesheet\" href=\"" + Html.Escape(this.ExtraCss.Get(i)) + "\">"
+        }
         html = html + "</head><body>"
         html = html + this.RenderElement(this.Body)
         html = html + "</body></html>"
         return html
+    }
+
+    // HTML void elements — no closing tag, no children. Browsers
+    // tolerate `</input>` but it parses as a stray end-tag error
+    // and bloats the document; emit `<input ...>` for these.
+    public static bool IsVoidTag(tag: string) {
+        return tag == "input"
+            || tag == "br"
+            || tag == "hr"
+            || tag == "img"
+            || tag == "meta"
+            || tag == "link"
     }
 
     // Walk one element. Recursive — children render inside.
@@ -514,6 +595,9 @@ public class Page {
             s = s + " onclick=\"window." + bname + "(JSON.stringify(window.__amc_collect()))\""
         }
         s = s + ">"
+        if (Page.IsVoidTag(e.Tag)) {
+            return s
+        }
         if (String_Length(e.Text) > 0) {
             s = s + Html.Escape(e.Text)
         }
