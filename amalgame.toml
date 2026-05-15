@@ -35,7 +35,7 @@
 
 [package]
 name              = "amalgame-ui-web"
-version           = "0.0.1-dev"
+version           = "0.0.4-dev"
 license           = "Apache-2.0"
 description       = "Webview-based GUI — HTML/CSS frontends rendered by the OS webview engine (WebView2 / WKWebView / WebKitGTK)"
 authors           = ["Bastien Mouget"]
@@ -64,8 +64,12 @@ precompile = true
 
 # Flags for .c sources (Amalgame_UI_Web.c). WEBVIEW_STATIC pins the
 # WEBVIEW_API macro in webview.h to plain `extern`, so our C
-# declarations link against the symbols emitted by webview.cc.
-cflags     = "-I./runtime/vendor/webview -DWEBVIEW_STATIC -O2"
+# declarations link against the symbols emitted by webview.cc. The
+# WebKitGTK / GTK include chain is needed by the Linux-only branch
+# that flips `gtk-application-prefer-dark-theme` when the OS reports
+# dark mode (see runtime/Amalgame_UI_Web.c). macOS and Windows
+# branches use OS APIs only and don't need GTK headers.
+cflags     = "-I./runtime/vendor/webview -DWEBVIEW_STATIC -O2 -I/usr/include/webkitgtk-4.1 -I/usr/include/gtk-3.0 -I/usr/include/glib-2.0 -I/usr/lib/x86_64-linux-gnu/glib-2.0/include -I/usr/include/cairo -I/usr/include/pango-1.0 -I/usr/include/harfbuzz -I/usr/include/atk-1.0 -I/usr/include/gdk-pixbuf-2.0 -I/usr/include/libsoup-3.0 -I/usr/include/pixman-1 -I/usr/include/freetype2"
 
 # Flags for .cc sources (webview.cc). Linux-specific include paths
 # below mirror Debian 12 / Ubuntu 22.04+ headers; macOS / Windows
