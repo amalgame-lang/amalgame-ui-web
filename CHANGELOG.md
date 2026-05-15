@@ -85,6 +85,18 @@ All notable changes to `amalgame-ui-web` are recorded here.
   void elements** (`input`, `br`, `hr`, `img`, `meta`, `link`).
   Browsers tolerated `<input></input>` but it parsed as a stray
   end-tag and bloated the rendered document.
+- **Webview chrome locked down by default** —
+  `Page.ApplyTo` injects guards that swallow the right-click
+  context menu and the reload hotkeys (`F5`, `Ctrl+R`/`Cmd+R`,
+  plus the shifted hard-reload variants). The page is loaded
+  via `SetHtml`, so reloading would land on `about:blank` and
+  strand the user. Apps that navigate to real URLs and want the
+  standard browser chrome opt back in with
+  `Page.New().AllowBrowserDefaults()`. `Ctrl+Shift+I` (DevTools
+  in debug mode) is intentionally left untouched.
+- **Textarea `resize: none`** in the baseline — the drag-grip
+  destabilizes declarative layouts. Re-enable per-element via
+  `.Style("resize:vertical")` when needed.
 
 ### Breaking
 
