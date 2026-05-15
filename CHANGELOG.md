@@ -2,7 +2,34 @@
 
 All notable changes to `amalgame-ui-web` are recorded here.
 
-## [Unreleased] — v0.0.4-dev
+## [Unreleased] — v0.0.5-dev
+
+### Added — Declarative result routing
+
+- **`Element.OnResult(targetId)`** — pair with `OnClick` to push
+  the handler's return value into another element by id, without
+  a manual click-listener bridge. The Render-time `onclick` wraps
+  the bound call in `window.__amc_route(...)`, which awaits the
+  promise from `Window.Bind` and writes the result into
+  `document.getElementById(targetId)`. Valid JSON returns are
+  pretty-printed (two-space indent); plain strings pass through
+  verbatim, so handlers returning either shape both render
+  usefully. No-op when the target id doesn't resolve at click
+  time. Pass `""` to clear a previously-set target.
+- **`window.__amc_route(promise, id)`** auto-injected by
+  `Page.ApplyTo` alongside `window.__amc_collect`. Exposed for
+  app code that wants to call it directly from raw JS (e.g. from
+  `Window.Eval`) rather than via the `Element.OnResult` builder.
+
+### Changed
+
+- `tests/spike_form.am` drops its in-page click-listener bridge
+  (the `v0.0.5 may add a declarative .OnResult` TODO from v0.0.4)
+  in favor of the new builder. The spike is now four lines shorter
+  and matches what `amc new --template ui-web-form` will scaffold
+  once amc v0.8.14 ships.
+
+## [v0.0.4] — 2026-05-15
 
 ### Added — Form reading
 

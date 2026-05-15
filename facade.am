@@ -279,23 +279,25 @@ public class Json {
 // to `new Element("custom-tag")` and Attr() chains.
 
 public class Element {
-    public Tag:        string
-    public Text:       string
-    public Children:   List<Element>
-    public AttrKeys:   List<string>
-    public AttrVals:   List<string>
-    public ClickFn:    Closure
-    public HasClick:   bool
-    public StyleCss:   string   // cumulative inline style — see Style()
+    public Tag:            string
+    public Text:           string
+    public Children:       List<Element>
+    public AttrKeys:       List<string>
+    public AttrVals:       List<string>
+    public ClickFn:        Closure
+    public HasClick:       bool
+    public StyleCss:       string   // cumulative inline style — see Style()
+    public ResultTargetId: string   // when non-empty, OnClick's return is routed into this element id
 
     public Element(tag: string) {
-        this.Tag      = tag
-        this.Text     = ""
-        this.Children = new List<Element>()
-        this.AttrKeys = new List<string>()
-        this.AttrVals = new List<string>()
-        this.HasClick = false
-        this.StyleCss = ""
+        this.Tag            = tag
+        this.Text           = ""
+        this.Children       = new List<Element>()
+        this.AttrKeys       = new List<string>()
+        this.AttrVals       = new List<string>()
+        this.HasClick       = false
+        this.StyleCss       = ""
+        this.ResultTargetId = ""
     }
 
     public Element SetText(t: string) {
@@ -361,6 +363,27 @@ public class Element {
     public Element OnClick(handler: Closure) {
         this.ClickFn  = handler
         this.HasClick = true
+        return this
+    }
+
+    // Route this element's OnClick return value into another
+    // element's text content. Use with `.OnClick(handler)` on the
+    // same element — the bridge awaits the handler's returned JSON,
+    // pretty-prints it (falling back to the raw string if it isn't
+    // valid JSON), and writes the result into
+    // `document.getElementById(targetId)`. Spare an output panel
+    // wiring a manual click listener for every form:
+    //
+    //   Element.Button("Submit")
+    //       .OnClick((req: string) => req)
+    //       .OnResult("out")
+    //   …
+    //   Element.Pre("(submit to see the payload)").Id("out")
+    //
+    // Pass "" to clear a previously-set target. No-op if the target
+    // element doesn't exist at click time.
+    public Element OnResult(targetId: string) {
+        this.ResultTargetId = targetId
         return this
     }
 
@@ -706,8 +729,23 @@ public class Page {
             this.BindHandlers.Add(e.ClickFn)
             // Pass JSON-stringified form state to every handler so
             // the AM side reads inputs declaratively — see the
-            // window.__amc_collect bridge injected by ApplyTo.
-            s = s + " onclick=\"window." + bname + "(JSON.stringify(window.__amc_collect()))\""
+            // window.__amc_collect bridge injected by ApplyTo. When
+            // OnResult is set, wrap the call in window.__amc_route
+            // (also injected by ApplyTo) so the handler's return
+            // lands in the target element without the caller writing
+            // a manual click listener.
+            let call: string = "window." + bname + "(JSON.stringify(window.__amc_collect()))"
+            if (String_Length(e.ResultTargetId) > 0) {
+                // Json.EncodeString produces a double-quoted JS
+                // string literal; Html.Escape then turns the `"` into
+                // `&quot;` so the surrounding `onclick="…"` parses
+                // cleanly. Apostrophes survive unescaped — fine because
+                // the JS literal is double-quoted, not single-quoted.
+                let idLit: string = Html.Escape(Json.EncodeString(e.ResultTargetId))
+                s = s + " onclick=\"window.__amc_route(" + call + "," + idLit + ")\""
+            } else {
+                s = s + " onclick=\"" + call + "\""
+            }
         }
         s = s + ">"
         if (Page.IsVoidTag(e.Tag)) {
@@ -747,6 +785,16 @@ public class Page {
     //     reason.
     public void ApplyTo(win: Window) {
         var initJs: string = "window.__amc_collect=function(){var o={};document.querySelectorAll('input[name],select[name],textarea[name]').forEach(function(el){var n=el.getAttribute('name');if(el.type==='checkbox'){o[n]=el.checked;}else if(el.type==='radio'){if(el.checked){o[n]=el.value;}}else{o[n]=el.value;}});return o;};"
+        // Result router for Element.OnResult(targetId). Awaits the
+        // bound handler's promise, then writes the return value into
+        // the target element. We pretty-print valid JSON for
+        // readability and fall through to the raw string for plain-
+        // text returns — so handlers that return `Json.EncodeString`
+        // wrappers AND handlers that return free-form strings both
+        // render usefully. The lookup is intentionally late-bound
+        // (querySelector at click time, not render time) so targets
+        // injected after Render still resolve.
+        initJs = initJs + "window.__amc_route=function(p,id){Promise.resolve(p).then(function(r){var el=document.getElementById(id);if(!el)return;try{el.textContent=JSON.stringify(JSON.parse(r),null,2);}catch(e){el.textContent=r;}});};"
         if (this.LockChrome) {
             initJs = initJs + "document.addEventListener('contextmenu',function(e){e.preventDefault();},true);"
             initJs = initJs + "document.addEventListener('keydown',function(e){var k=e.key;var m=e.ctrlKey||e.metaKey;if(k==='F5'){e.preventDefault();return;}if(m&&(k==='r'||k==='R')){e.preventDefault();return;}},true);"
