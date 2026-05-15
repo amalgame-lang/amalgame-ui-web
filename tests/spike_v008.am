@@ -89,10 +89,19 @@ class Program {
         let win: Window = new Window("amalgame-ui-web v0.0.8 — IDE shell demo", 900, 600, true)
         if (!win.IsValid()) { return }
 
-        // FullBleed() strips the 16px body padding so the MenuBar
-        // sits flush against the top edge and the SplitContainer
-        // fills the rest — proper IDE-shell look.
-        let page: Page = Page.New().SetTitle("v0.0.8 spike").FullBleed().SetBody(body)
+        // FullBleed strips the 16px body padding. AutoTheme adds a
+        // matchMedia listener so the UI flips live when the user
+        // switches the OS color scheme; OnThemeChange echoes the
+        // new mode into the status label.
+        let page: Page = Page.New()
+            .SetTitle("v0.0.8 spike")
+            .FullBleed()
+            .AutoTheme(true)
+            .OnThemeChange((req: string) => {
+                Console.WriteLine("[theme] now: " + req)
+                return ""
+            })
+            .SetBody(body)
 
         // Menu actions — File / Edit / View handlers.
         win.Bind("amc_menu_new", (req: string) => {

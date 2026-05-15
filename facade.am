@@ -1551,6 +1551,9 @@ public class Page {
     public LockChrome:     bool           // block right-click menu + F5/Ctrl+R/Cmd+R reloads?
     public FillFlag:       bool           // body fills the viewport (flex col, root child scrolls)
     public FullBleedFlag:  bool           // body padding:0 (IDE-shell layouts)
+    public AutoThemeFlag:  bool           // listen to matchMedia + flip data-theme live
+    public ThemeChangeFn:  Closure        // optional AM callback when the OS theme flips
+    public HasThemeChange: bool
 
     public Page() {
         this.Title          = ""
@@ -1565,6 +1568,8 @@ public class Page {
         this.LockChrome     = true
         this.FillFlag       = true
         this.FullBleedFlag  = false
+        this.AutoThemeFlag  = false
+        this.HasThemeChange = false
     }
 
     public static Page New() {
@@ -1691,6 +1696,41 @@ public class Page {
     // padding via specificity.
     public Page FullBleed() {
         this.FullBleedFlag = true
+        return this
+    }
+
+    // Track the OS color scheme at runtime. When ON, Page.ApplyTo
+    // injects a `matchMedia('(prefers-color-scheme: dark)')`
+    // listener that flips `<html data-theme>` whenever the user
+    // switches the system theme — the baseline CSS variables
+    // re-cascade and the entire UI swaps to light/dark live, no
+    // window reload required.
+    //
+    // Default OFF: the static `Page.SetTheme(mode)` + initial
+    // OS-detection still produces the right theme at open time.
+    // Turn AutoTheme on for apps that should follow the user's
+    // preference while running.
+    //
+    //   Page.New().AutoTheme(true).SetBody(...)
+    //
+    // Works fully on WebView2 (Windows) and WKWebView (macOS).
+    // On WebKitGTK (Linux), `matchMedia` honors the GTK theme
+    // when WebKitGTK 2.40+ is built with theme awareness; older
+    // builds may need a window reload to pick up the change.
+    public Page AutoTheme(b: bool) {
+        this.AutoThemeFlag = b
+        return this
+    }
+
+    // Optional AM-side callback fired when the OS theme switches
+    // (or once on page load if `AutoTheme` is on). The handler
+    // receives `"dark"` or `"light"` as the `req` argument and
+    // can do whatever it needs — refresh a chart palette, regen
+    // a Pre, write a status line, etc. Implies `AutoTheme(true)`.
+    public Page OnThemeChange(handler: Closure) {
+        this.ThemeChangeFn  = handler
+        this.HasThemeChange = true
+        this.AutoThemeFlag  = true
         return this
     }
 
@@ -2163,6 +2203,12 @@ public class Page {
             initJs = initJs + "document.addEventListener('contextmenu',function(e){e.preventDefault();},true);"
             initJs = initJs + "document.addEventListener('keydown',function(e){var k=e.key;var m=e.ctrlKey||e.metaKey;if(k==='F5'){e.preventDefault();return;}if(m&&(k==='r'||k==='R')){e.preventDefault();return;}},true);"
         }
+        // v0.0.9 — AutoTheme: listen to OS prefers-color-scheme
+        // and flip <html data-theme> live. Also calls _amc_theme
+        // when an AM-side OnThemeChange handler is bound.
+        if (this.AutoThemeFlag) {
+            initJs = initJs + "(function(){if(!window.matchMedia)return;var mq=window.matchMedia('(prefers-color-scheme: dark)');function apply(){var m=mq.matches?'dark':'light';document.documentElement.setAttribute('data-theme',m);if(window._amc_theme)window._amc_theme(m);}apply();if(mq.addEventListener)mq.addEventListener('change',apply);else if(mq.addListener)mq.addListener(apply);})();"
+        }
         win.Init(initJs)
         let html: string = this.Render()
         win.SetHtml(html)
@@ -2176,6 +2222,13 @@ public class Page {
         // codegen for static-method calls inside a closure threads
         // the class name as a phantom `self` arg, causing a C
         // compile error. The `@c` block sidesteps that.
+        // AutoTheme handler — if the user attached an
+        // OnThemeChange callback, bind it now so the live
+        // matchMedia listener can dispatch to AM. The handler
+        // receives "dark" or "light" as the `req` JSON string.
+        if (this.HasThemeChange) {
+            win.Bind("_amc_theme", this.ThemeChangeFn)
+        }
         win.Bind("_amc_openurl", (req: string) => {
             // webview/webview wraps every bind callback's argv as
             // a JSON array: e.g. `window.foo("a","b")` arrives as
