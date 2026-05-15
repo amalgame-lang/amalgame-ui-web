@@ -29,6 +29,28 @@ class Program {
                             .OnResult("out")
                     )
                     .AddChild(Element.Pre("").Id("out"))
+                    // v0.0.5 — WinForms-aligned widgets + OnChange.
+                    .AddChild(Element.Password("pwd"))
+                    .AddChild(Element.Number("qty", 1, 100, 1))
+                    .AddChild(Element.Slider("vol", 0, 100, 5))
+                    .AddChild(Element.DatePicker("when"))
+                    .AddChild(Element.TimePicker("hour"))
+                    .AddChild(Element.ColorPicker("tint"))
+                    .AddChild(Element.ProgressBar(42, 100))
+                    .AddChild(Element.Image("file:///tmp/none.png"))
+                    .AddChild(Element.Link("docs", "https://example.com"))
+                    .AddChild(Element.ListBox("tags", 4)
+                        .AddChild(Element.Option("a", "Alpha"))
+                        .AddChild(Element.Option("b", "Beta")))
+                    .AddChild(Element.Input("live").OnChange((req: string) => req))
+                    .AddChild(
+                        Element.Grid(0, 3, 8)
+                            .AddChild(Element.Label("r1c1"))
+                            .AddChild(Element.Label("r1c2"))
+                            .AddChild(Element.Label("r1c3")))
+                    .AddChild(
+                        Element.AbsoluteContainer()
+                            .AddChild(Element.Label("pinned").Position(40, 20)))
             )
         Console.WriteLine(page.Render())
     }

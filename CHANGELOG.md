@@ -18,8 +18,57 @@ All notable changes to `amalgame-ui-web` are recorded here.
   time. Pass `""` to clear a previously-set target.
 - **`window.__amc_route(promise, id)`** auto-injected by
   `Page.ApplyTo` alongside `window.__amc_collect`. Exposed for
-  app code that wants to call it directly from raw JS (e.g. from
-  `Window.Eval`) rather than via the `Element.OnResult` builder.
+  app code that wants to call it directly from raw JS rather
+  than via the `Element.OnResult` builder.
+
+### Added — Reactive `OnChange` event
+
+- **`Element.OnChange(handler: Closure)`** — fire on `change`
+  for inputs/selects and on both `change` + `input` for text
+  inputs/textareas (live update on every keystroke). Same JSON
+  form payload as `OnClick`, so handlers can read every named
+  field — not just the one that changed. Composes with
+  `OnResult` exactly like `OnClick` does.
+
+### Added — Layout sugar
+
+- **`Element.Grid(rows: int, cols: int, gap: int)`** — CSS Grid
+  container builder. Equivalent to ui-forms' `GridLayout`.
+  Children flow left-to-right, top-to-bottom into `rows × cols`
+  cells; pass `rows = 0` for implicit row count.
+- **`Element.AbsoluteContainer()`** — `position:relative` div
+  that anchors absolutely-positioned children. Equivalent to
+  ui-forms' `AbsoluteLayout`.
+- **`Element.Position(x: int, y: int)`** — inline sugar for
+  `position:absolute;left:Xpx;top:Ypx`. Pair with `Size(w, h)`
+  for full x/y/w/h placement.
+
+### Added — WinForms-aligned widgets
+
+The webview-side equivalents of common .NET / WinForms toolbox
+controls — pure HTML5, leveraging the OS form widgets for native
+pickers and accessibility:
+
+- **`Element.Password(name)`** → `<input type=password>` —
+  WinForms `TextBox` with `PasswordChar`.
+- **`Element.Number(name, min, max, step)`** →
+  `<input type=number>` — `NumericUpDown`.
+- **`Element.Slider(name, min, max, step)`** →
+  `<input type=range>` — `TrackBar`.
+- **`Element.DatePicker(name)`** → `<input type=date>` —
+  `DateTimePicker` (date-only).
+- **`Element.TimePicker(name)`** → `<input type=time>`.
+- **`Element.ColorPicker(name)`** → `<input type=color>` —
+  inline `ColorDialog`.
+- **`Element.ProgressBar(value, max)`** → `<progress>` —
+  `ProgressBar`. Pass `value < 0` for an indeterminate bar.
+- **`Element.Image(src)`** → `<img>` — accepts `file://`,
+  `https://`, or `data:image/...` URLs.
+- **`Element.Link(text, url)`** → `<a href>` — `LinkLabel`.
+- **`Element.ListBox(name, size)`** → `<select multiple>` —
+  `ListBox`. Auto-collect doesn't currently report multi-select
+  values; attach `OnChange` and read `.selectedOptions` via
+  `Window.Eval` until v0.0.6.
 
 ### Changed
 
@@ -28,6 +77,14 @@ All notable changes to `amalgame-ui-web` are recorded here.
   in favor of the new builder. The spike is now four lines shorter
   and matches what `amc new --template ui-web-form` will scaffold
   once amc v0.8.14 ships.
+
+### Known issues
+
+- **`Element.AbsoluteContainer().Size(w, h).AddChild(…)`** trips
+  an amc type-inference glitch and emits `i64_AddChild`. Workaround:
+  drop the `.Size(...)` (anchor sizing via `.Style("width:…;height:…")`
+  on the container or its children) or stage through a `let`. Fix
+  tracked for an amc patch release; the underlying facade is fine.
 
 ## [v0.0.4] — 2026-05-15
 
