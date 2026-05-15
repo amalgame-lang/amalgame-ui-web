@@ -40,6 +40,49 @@ public class WindowHint {
     public static int Fixed() { return 3 }   // (w, h) is locked
 }
 
+// ─── Tiny HTML / JSON escape helpers ──────────────────────
+// (Declared before Window so Window methods that build JS
+// payloads — SetInnerHtml, AppendHtml — can use Json.EncodeString
+// without a forward-declaration trick.)
+
+public class Html {
+    // Minimal HTML escape — covers the attack surface for
+    // user-supplied text content and attribute values. Order
+    // matters: `&` first so we don't double-escape the entities
+    // we're emitting.
+    public static string Escape(s: string) {
+        var r: string = s
+        r = String_Replace(r, "&", "&amp;")
+        r = String_Replace(r, "<", "&lt;")
+        r = String_Replace(r, ">", "&gt;")
+        r = String_Replace(r, "\"", "&quot;")
+        return r
+    }
+}
+
+public class Json {
+    // JSON-encode a single string value — wraps in double quotes
+    // and escapes `\` and `"`. Newlines / CR / tabs are escaped
+    // too (Window.SetInnerHtml's payload becomes a JS string
+    // literal, which forbids raw control chars). Non-ASCII UTF-8
+    // passes through as-is — most JSON parsers accept it.
+    //
+    // For Bind handlers, wrap your free-form return strings with
+    // this so the JS side receives a proper string value rather
+    // than a parse error:
+    //
+    //     win.Bind("save", (req: string) => Json.EncodeString("ok"))
+    public static string EncodeString(s: string) {
+        var r: string = s
+        r = String_Replace(r, "\\", "\\\\")
+        r = String_Replace(r, "\"", "\\\"")
+        r = String_Replace(r, "\r", "\\r")
+        r = String_Replace(r, "\n", "\\n")
+        r = String_Replace(r, "\t", "\\t")
+        return "\"" + r + "\""
+    }
+}
+
 // ─── Window ────────────────────────────────────────────────
 
 public class Window {
@@ -134,6 +177,43 @@ public class Window {
         @c {
             Amalgame_UI_Web_Eval(s, js);
         }
+    }
+
+    // ── Partial DOM updates (v0.0.5) ──────────────────────
+    //
+    // SetInnerHtml replaces the inner HTML of `#elementId` without
+    // re-rendering the whole page. Useful for DataGrid-style apps
+    // that need to refresh just the rows, append a new row, swap
+    // a panel, etc. Cheaper than ApplyTo every time and preserves
+    // form-input state outside the patched region.
+    //
+    // The HTML is injected via element.innerHTML assignment, so
+    // inline `on<event>=` attributes survive — Page.PatchInner
+    // pairs this with new Window.Bind registrations so any
+    // freshly-rendered OnClick handler stays wired.
+    public void SetInnerHtml(elementId: string, html: string) {
+        let idLit: string = Json.EncodeString(elementId)
+        let htmlLit: string = Json.EncodeString(html)
+        let js: string = "(function(){var el=document.getElementById(" + idLit + ");if(el){el.innerHTML=" + htmlLit + ";}})();"
+        this.Eval(js)
+    }
+
+    // Append HTML as a new last-child of `#elementId`. Same
+    // contract as SetInnerHtml — use Page.PatchInner for the
+    // typed Element variant.
+    public void AppendHtml(elementId: string, html: string) {
+        let idLit: string = Json.EncodeString(elementId)
+        let htmlLit: string = Json.EncodeString(html)
+        let js: string = "(function(){var el=document.getElementById(" + idLit + ");if(el){el.insertAdjacentHTML('beforeend'," + htmlLit + ");}})();"
+        this.Eval(js)
+    }
+
+    // Remove the element with the given id from the DOM. No-op if
+    // missing. Useful for closing dialogs, dismissing rows, etc.
+    public void RemoveElement(elementId: string) {
+        let idLit: string = Json.EncodeString(elementId)
+        let js: string = "(function(){var el=document.getElementById(" + idLit + ");if(el){el.remove();}})();"
+        this.Eval(js)
     }
 
     // Block on the event loop until the window closes or
@@ -237,40 +317,6 @@ public class Window {
 //     win.Run()
 
 // ─── Tiny HTML / JSON escape helpers ──────────────────────
-
-public class Html {
-    // Minimal HTML escape — covers the attack surface for
-    // user-supplied text content and attribute values. Order
-    // matters: `&` first so we don't double-escape the entities
-    // we're emitting.
-    public static string Escape(s: string) {
-        var r: string = s
-        r = String_Replace(r, "&", "&amp;")
-        r = String_Replace(r, "<", "&lt;")
-        r = String_Replace(r, ">", "&gt;")
-        r = String_Replace(r, "\"", "&quot;")
-        return r
-    }
-}
-
-public class Json {
-    // JSON-encode a single string value — wraps in double quotes
-    // and escapes `\` and `"`. Doesn't handle control characters
-    // or non-ASCII (UTF-8 passes through as-is, which most JSON
-    // parsers accept).
-    //
-    // For Bind handlers, wrap your free-form return strings with
-    // this so the JS side receives a proper string value rather
-    // than a parse error:
-    //
-    //     win.Bind("save", (req: string) => Json.EncodeString("ok"))
-    public static string EncodeString(s: string) {
-        var r: string = s
-        r = String_Replace(r, "\\", "\\\\")
-        r = String_Replace(r, "\"", "\\\"")
-        return "\"" + r + "\""
-    }
-}
 
 // ─── Element ───────────────────────────────────────────────
 //
@@ -832,14 +878,24 @@ public class Element {
         return e.Attr("src", src)
     }
 
-    // Hyperlink — equivalent to WinForms' `LinkLabel`. By default
-    // opens the URL in the user's browser (the webview's native
-    // anchor handling). For in-app navigation, attach an
-    // .OnClick handler and call `e.preventDefault()` from JS or
-    // return `false` from the bound handler.
+    // Hyperlink — equivalent to WinForms' `LinkLabel`. Clicking
+    // opens the URL in the user's default OS browser via the
+    // window._amc_openurl bridge bound by Page.ApplyTo. The
+    // onclick attribute is emitted in-place rather than relying
+    // on a global event delegate so the webview's native
+    // navigation handler never gets a chance to swallow it.
+    //
+    // For in-app navigation, attach `.Attr("data-amc-internal",
+    // "true")` and add your own .OnClick handler — the external
+    // interceptor backs off when it sees that attribute.
     public static Element Link(text: string, url: string) {
         let e: Element = new Element("a")
-        return e.Attr("href", url).SetText(text)
+        let urlLit: string = Json.EncodeString(url)
+        // href stays for middle-click / right-click "Copy link";
+        // onclick hijacks the default left-click navigation.
+        e.Attr("href", url)
+        e.Attr("onclick", "event.preventDefault();if(window._amc_openurl)window._amc_openurl(" + urlLit + ");return false")
+        return e.SetText(text)
     }
 
     // ── Additional WinForms widgets (v0.0.5 greens) ───────
@@ -958,9 +1014,12 @@ public class Element {
     }
 
     // Tabular list view — equivalent to WinForms' ListView in
-    // Details mode. `headers` is the column titles. Populate with
-    // Element.ListViewRow(values: List<string>) children.
-    public static Element ListView(headers: List<string>) {
+    // Details mode. `headers` is the column titles. `bodyId` is
+    // the DOM id stamped on the inner `<tbody>` — pass "" to skip,
+    // pass a non-empty string to make the body addressable by
+    // `Page.AppendInner(win, bodyId, …)` / `Page.PatchInner(…)`
+    // for live row updates.
+    public static Element ListView(headers: List<string>, bodyId: string) {
         let e: Element = new Element("table")
         e.Class("amc-listview")
         let thead: Element = new Element("thead")
@@ -975,6 +1034,9 @@ public class Element {
         e.Children.Add(thead)
         let tbody: Element = new Element("tbody")
         tbody.Class("amc-listview-body")
+        if (String_Length(bodyId) > 0) {
+            tbody.Attr("id", bodyId)
+        }
         e.Children.Add(tbody)
         return e
     }
@@ -1052,6 +1114,7 @@ public class Page {
     public UseBaseline:    bool           // inject the baseline <style> in <head>?
     public ThemeMode:      string         // "auto" | "light" | "dark" (controls <html data-theme>)
     public LockChrome:     bool           // block right-click menu + F5/Ctrl+R/Cmd+R reloads?
+    public FillFlag:       bool           // body fills the viewport (flex col, root child scrolls)
 
     public Page() {
         this.Title          = ""
@@ -1064,6 +1127,7 @@ public class Page {
         this.UseBaseline    = true
         this.ThemeMode      = "auto"
         this.LockChrome     = true
+        this.FillFlag       = false
     }
 
     public static Page New() {
@@ -1160,6 +1224,28 @@ public class Page {
         return this
     }
 
+    // Make the page fill the viewport vertically — the body becomes
+    // a flex column pinned to 100vh, and its first child grows to
+    // take the remaining space with `overflow:auto`. Use this when
+    // you have a tall layout (long form, ListView, embedded iframe)
+    // and want the page to NOT show a window-level scrollbar:
+    // instead, the inner scroll happens inside the panel.
+    //
+    // OFF by default to preserve the natural-flow behavior — apps
+    // that just want a centered form column don't need this.
+    //
+    //   Page.New().FillViewport()
+    //       .SetBody(Element.Stack()
+    //           .AddChild(Element.Heading("App"))
+    //           .AddChild(Element.TabControl("main") ... ))
+    //
+    // Combine with a StatusStrip — the strip stays anchored to the
+    // viewport bottom because it's `position:fixed`.
+    public Page FillViewport() {
+        this.FillFlag = true
+        return this
+    }
+
     // Resolve the effective theme for this render. "auto" defers to
     // Page.DetectOSTheme; "light"/"dark" pass through verbatim;
     // anything else is treated as "auto" so callers can't accidentally
@@ -1199,7 +1285,16 @@ public class Page {
         c = c + "[data-theme=dark]{--amc-bg:#1e1e1e;--amc-fg:#e8e8e8;--amc-muted:#9a9a9a;--amc-border:#404040;--amc-surface:#2a2a2a;--amc-accent:#4a9eff;color-scheme:dark}"
         c = c + "@media(prefers-color-scheme:dark){:root:not([data-theme=light]){--amc-bg:#1e1e1e;--amc-fg:#e8e8e8;--amc-muted:#9a9a9a;--amc-border:#404040;--amc-surface:#2a2a2a;--amc-accent:#4a9eff;color-scheme:dark}}"
         c = c + "*{box-sizing:border-box}"
+        c = c + "html{height:100%}"
         c = c + "body{margin:0;padding:16px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:14px;line-height:1.5;color:var(--amc-fg);background:var(--amc-bg);-webkit-user-select:none;user-select:none}"
+        // FillViewport mode — body becomes a 100vh flex column; its
+        // first child grows to fill remaining space and gets an
+        // inner scroll (no window-level vscroll). Activated by
+        // Page.FillViewport(), which writes class=\"amc-fill\" on
+        // <body>.
+        c = c + "body.amc-fill{height:100vh;overflow:hidden;display:flex;flex-direction:column;gap:8px}"
+        c = c + "body.amc-fill>*{min-height:0}"
+        c = c + "body.amc-fill>*:first-child{flex:1;overflow:auto}"
         c = c + "input,select,textarea,pre{-webkit-user-select:text;user-select:text}"
         c = c + "h1,h2,h3{margin:0 0 8px}p{margin:0 0 8px}"
         c = c + "button{padding:6px 12px;border:1px solid var(--amc-border);border-radius:var(--amc-radius);background:var(--amc-surface);color:var(--amc-fg);cursor:pointer;font:inherit}"
@@ -1286,10 +1381,53 @@ public class Page {
         for i in 0..nx {
             html = html + "<link rel=\"stylesheet\" href=\"" + Html.Escape(this.ExtraCss.Get(i)) + "\">"
         }
-        html = html + "</head><body>"
+        var bodyTag: string = "<body>"
+        if (this.FillFlag) {
+            bodyTag = "<body class=\"amc-fill\">"
+        }
+        html = html + "</head>" + bodyTag
         html = html + this.RenderElement(this.Body)
         html = html + "</body></html>"
         return html
+    }
+
+    // ── Partial updates (v0.0.5) ──────────────────────────
+    //
+    // PatchInner replaces the inner HTML of `#targetId` with a
+    // freshly-rendered subtree, accumulating its event bindings
+    // into the page's bind table and re-registering them on the
+    // window. Use to refresh a single DataGrid row, swap a tab
+    // panel body, or any other partial update — much cheaper than
+    // re-applying the whole Page.
+    //
+    //   page.PatchInner(win, "grid-body", newRowsContainer)
+    //
+    // The counter is intentionally NOT reset, so handler names
+    // stay unique across calls. The element passed in does NOT
+    // include `#targetId` itself — only its children replace the
+    // existing inner HTML.
+    public void PatchInner(win: Window, targetId: string, element: Element) {
+        let before: int = this.BindNames.Count()
+        let html: string = this.RenderElement(element)
+        let after: int = this.BindNames.Count()
+        for i in before..after {
+            win.Bind(this.BindNames.Get(i), this.BindHandlers.Get(i))
+        }
+        win.SetInnerHtml(targetId, html)
+    }
+
+    // AppendInner adds the rendered element as a new last child of
+    // `#targetId` instead of replacing the existing children. Same
+    // binding contract as PatchInner — typical use is appending a
+    // new row to a ListView body.
+    public void AppendInner(win: Window, targetId: string, element: Element) {
+        let before: int = this.BindNames.Count()
+        let html: string = this.RenderElement(element)
+        let after: int = this.BindNames.Count()
+        for i in before..after {
+            win.Bind(this.BindNames.Get(i), this.BindHandlers.Get(i))
+        }
+        win.AppendHtml(targetId, html)
     }
 
     // HTML void elements — no closing tag, no children. Browsers
