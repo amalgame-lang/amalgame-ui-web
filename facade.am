@@ -318,6 +318,100 @@ public class Window {
 
 // ─── Tiny HTML / JSON escape helpers ──────────────────────
 
+// ─── Dialog — modal message box (v0.0.6) ──────────────────
+//
+// Equivalent to WinForms' `MessageBox.Show`. Pops a native-styled
+// modal over the current page with a heading, message, and a set
+// of buttons. The user's choice flows back into Amalgame through
+// a closure callback — handlers receive the button id as the
+// `req` string ("ok", "cancel", "yes", "no", "close").
+//
+// Implementation: appends a <dialog id="amc-dialog"> with the
+// requested buttons, binds `_amc_dialog_result` to forward the
+// click, calls `dialog.showModal()` via Eval. The HTML <dialog>
+// element handles the focus trap + Esc-to-close natively (Esc
+// emits "cancel" through the bound callback).
+//
+// Single global slot — opening a new Dialog while one is visible
+// replaces the previous one. Adequate for v0.0.6; future versions
+// may stack via per-call ids.
+
+public class Dialog {
+    // Info dialog — single OK button. The handler fires with
+    // "ok" when the user dismisses. Pass `null` (an empty
+    // closure that returns "") if you don't need to react.
+    public static void Info(win: Window, title: string, message: string, handler: Closure) {
+        Dialog.Show(win, "info", title, message, "ok", handler)
+    }
+
+    // Warning dialog — single OK button with a warning accent.
+    public static void Warning(win: Window, title: string, message: string, handler: Closure) {
+        Dialog.Show(win, "warning", title, message, "ok", handler)
+    }
+
+    // Error dialog — single OK button with a destructive accent.
+    public static void Error(win: Window, title: string, message: string, handler: Closure) {
+        Dialog.Show(win, "error", title, message, "ok", handler)
+    }
+
+    // Confirm — OK / Cancel. Handler fires with "ok" or "cancel".
+    public static void Confirm(win: Window, title: string, message: string, handler: Closure) {
+        Dialog.Show(win, "info", title, message, "ok-cancel", handler)
+    }
+
+    // Yes / No / Cancel. Handler fires with "yes", "no", or "cancel".
+    public static void YesNoCancel(win: Window, title: string, message: string, handler: Closure) {
+        Dialog.Show(win, "info", title, message, "yes-no-cancel", handler)
+    }
+
+    // Lower-level entry point. `kind` ∈ {"info","warning","error"}
+    // selects the accent color via the .amc-dialog-<kind> class.
+    // `buttons` ∈ {"ok","ok-cancel","yes-no","yes-no-cancel"} selects
+    // the button row.
+    public static void Show(win: Window, kind: string, title: string, message: string, buttons: string, handler: Closure) {
+        win.Bind("_amc_dialog_result", handler)
+        // Wipe any previous dialog so opening N+1 replaces N.
+        win.RemoveElement("amc-dialog")
+        var btns: string = ""
+        if (buttons == "ok") {
+            btns = "<button class=\"amc-dialog-btn amc-dialog-primary\" data-id=\"ok\">OK</button>"
+        }
+        if (buttons == "ok-cancel") {
+            btns = "<button class=\"amc-dialog-btn\" data-id=\"cancel\">Cancel</button>"
+                 + "<button class=\"amc-dialog-btn amc-dialog-primary\" data-id=\"ok\">OK</button>"
+        }
+        if (buttons == "yes-no") {
+            btns = "<button class=\"amc-dialog-btn\" data-id=\"no\">No</button>"
+                 + "<button class=\"amc-dialog-btn amc-dialog-primary\" data-id=\"yes\">Yes</button>"
+        }
+        if (buttons == "yes-no-cancel") {
+            btns = "<button class=\"amc-dialog-btn\" data-id=\"cancel\">Cancel</button>"
+                 + "<button class=\"amc-dialog-btn\" data-id=\"no\">No</button>"
+                 + "<button class=\"amc-dialog-btn amc-dialog-primary\" data-id=\"yes\">Yes</button>"
+        }
+        var k: string = kind
+        if (k != "info" && k != "warning" && k != "error") {
+            k = "info"
+        }
+        // Build the dialog markup. Each button's onclick closes the
+        // dialog with its data-id, then dispatches the result to AM.
+        let titleEsc: string = Html.Escape(title)
+        let msgEsc:   string = Html.Escape(message)
+        var html: string = "<dialog id=\"amc-dialog\" class=\"amc-dialog amc-dialog-" + k + "\">"
+        html = html + "<div class=\"amc-dialog-head\">" + titleEsc + "</div>"
+        html = html + "<div class=\"amc-dialog-body\">" + msgEsc + "</div>"
+        html = html + "<div class=\"amc-dialog-row\">" + btns + "</div>"
+        html = html + "</dialog>"
+        // body has no id, so AppendHtml(id, …) doesn't fit; inject
+        // directly via Eval against document.body. The wire-up step
+        // (showModal + button onclicks + Esc-cancel) runs right after.
+        let htmlLit: string = Json.EncodeString(html)
+        let injectJs: string = "document.body.insertAdjacentHTML('beforeend'," + htmlLit + ");"
+        let wireJs: string = "(function(){var d=document.getElementById('amc-dialog');if(!d)return;d.querySelectorAll('.amc-dialog-btn').forEach(function(b){b.onclick=function(){var v=b.getAttribute('data-id')||'cancel';d.close(v);window._amc_dialog_result(v);};});d.addEventListener('cancel',function(){window._amc_dialog_result('cancel');});d.showModal();})()"
+        win.Eval(injectJs + wireJs)
+    }
+}
+
 // ─── Element ───────────────────────────────────────────────
 //
 // A node in the HTML tree. Static builders cover the common cases
@@ -1365,18 +1459,27 @@ public class Page {
         // explicit +/− buttons via the Element.Number composite.
         // Pin the input height so the bare input doesn't jitter
         // either; hide any residual native spinners on WebKit.
-        c = c + "input[type=number]{height:32px;box-sizing:border-box}"
-        c = c + "input[type=number]::-webkit-inner-spin-button,input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}"
+        // Kill native spin buttons everywhere — both on the input
+        // and on the pseudo-elements. !important locks the cascade
+        // order in case a tab-switch (display:none → display:flex)
+        // re-applies the UA default appearance briefly.
+        c = c + "input[type=number]{-webkit-appearance:textfield!important;appearance:textfield!important;height:32px;box-sizing:border-box}"
+        c = c + "input[type=number]::-webkit-inner-spin-button,input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none!important;appearance:none!important;display:none!important;margin:0;width:0;height:0}"
         // NumericUpDown composite — input + vertically-stacked
         // up/down buttons on the right, mirroring the native
-        // WinForms look. The wrapper carries the border + height
-        // so the inner input and buttons can stay borderless.
-        c = c + ".amc-numericupdown{display:inline-flex;align-items:stretch;border-radius:var(--amc-radius);overflow:hidden;border:1px solid var(--amc-border);height:32px;background:var(--amc-bg)}"
-        c = c + ".amc-numericupdown>input[type=number]{border:none;border-radius:0;height:auto;flex:1;min-width:60px;padding:0 8px;background:transparent}"
+        // WinForms look. `contain:layout style` isolates the
+        // composite from the parent's layout so hover-state changes
+        // inside CAN NOT reflow the surrounding row. Belt-and-
+        // braces with !important on the height/min-height/max-height
+        // because the bug only showed up after a tab-switch cycle
+        // (display:none → display:flex re-applied UA styles in a
+        // different cascade order).
+        c = c + ".amc-numericupdown{display:inline-flex;align-items:stretch;border-radius:var(--amc-radius);overflow:hidden;border:1px solid var(--amc-border);height:32px!important;min-height:32px!important;max-height:32px!important;background:var(--amc-bg);box-sizing:border-box;contain:layout style}"
+        c = c + ".amc-numericupdown>input[type=number]{-webkit-appearance:textfield!important;appearance:textfield!important;border:none;border-radius:0;height:32px!important;flex:1;min-width:60px;padding:0 8px;background:transparent;box-sizing:border-box}"
         c = c + ".amc-numericupdown>input[type=number]:focus{outline:none}"
         c = c + ".amc-numericupdown:focus-within{outline:2px solid var(--amc-accent);outline-offset:-1px}"
-        c = c + ".amc-numericupdown>.amc-num-spin{display:flex;flex-direction:column;border-left:1px solid var(--amc-border);width:18px}"
-        c = c + ".amc-numericupdown>.amc-num-spin>button.amc-num-btn{flex:1;padding:0;border:none;background:var(--amc-surface);color:var(--amc-fg);cursor:pointer;font-size:8px;line-height:1;border-radius:0;display:flex;align-items:center;justify-content:center}"
+        c = c + ".amc-numericupdown>.amc-num-spin{display:flex;flex-direction:column;border-left:1px solid var(--amc-border);width:18px!important;min-width:18px!important;max-width:18px!important;height:32px!important;box-sizing:border-box}"
+        c = c + ".amc-numericupdown>.amc-num-spin>button.amc-num-btn{flex:1;padding:0;margin:0;border:none;background:var(--amc-surface);color:var(--amc-fg);cursor:pointer;font-size:8px;line-height:1;border-radius:0;display:flex;align-items:center;justify-content:center;box-sizing:border-box;min-height:0}"
         c = c + ".amc-numericupdown>.amc-num-spin>button.amc-num-up{border-bottom:1px solid var(--amc-border)}"
         c = c + ".amc-numericupdown>.amc-num-spin>button.amc-num-btn:hover{background:var(--amc-border)}"
         // v0.0.5 — color picker: the generic input rule shrinks the
@@ -1436,6 +1539,19 @@ public class Page {
         // attribute. The `:invalid` pseudo-class auto-applies once
         // the user has typed; we don't want it red on first paint.
         c = c + "input:not(:placeholder-shown):invalid{border-color:#c0392b}"
+        // Dialog (MessageBox) — themed via --amc-* variables. The
+        // ::backdrop pseudo-element themes the modal scrim.
+        c = c + "dialog.amc-dialog{border:1px solid var(--amc-border);border-radius:var(--amc-radius);padding:0;background:var(--amc-bg);color:var(--amc-fg);min-width:320px;max-width:520px;box-shadow:0 8px 32px rgba(0,0,0,0.4)}"
+        c = c + "dialog.amc-dialog::backdrop{background:rgba(0,0,0,0.5)}"
+        c = c + "dialog.amc-dialog>.amc-dialog-head{padding:12px 16px;font-weight:600;font-size:15px;border-bottom:1px solid var(--amc-border)}"
+        c = c + "dialog.amc-dialog>.amc-dialog-body{padding:16px;line-height:1.5;white-space:pre-wrap}"
+        c = c + "dialog.amc-dialog>.amc-dialog-row{display:flex;flex-direction:row;justify-content:flex-end;gap:8px;padding:8px 16px 12px;border-top:1px solid var(--amc-border);background:var(--amc-surface)}"
+        c = c + "dialog.amc-dialog .amc-dialog-btn{padding:6px 16px;border:1px solid var(--amc-border);border-radius:var(--amc-radius);background:var(--amc-bg);color:var(--amc-fg);cursor:pointer;font:inherit;min-width:80px}"
+        c = c + "dialog.amc-dialog .amc-dialog-btn:hover{background:var(--amc-surface)}"
+        c = c + "dialog.amc-dialog .amc-dialog-primary{background:var(--amc-accent);color:#fff;border-color:var(--amc-accent)}"
+        c = c + "dialog.amc-dialog .amc-dialog-primary:hover{filter:brightness(0.9)}"
+        c = c + "dialog.amc-dialog-warning>.amc-dialog-head{color:#d67d00;border-bottom-color:#d67d00}"
+        c = c + "dialog.amc-dialog-error>.amc-dialog-head{color:#c0392b;border-bottom-color:#c0392b}"
         return c
     }
 
