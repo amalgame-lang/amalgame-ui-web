@@ -701,9 +701,48 @@ public class Element {
     // Single-choice radio button. Multiple Radio elements sharing
     // the same `name` form a group; the form payload reports the
     // `value` of the selected one (key absent if none is checked).
+    // Pair with a separate <label> if you need a clickable caption,
+    // or use Element.RadioLabel(...) for a single wrapped builder.
     public static Element Radio(name: string, value: string) {
         let e: Element = new Element("input")
         return e.Attr("type", "radio").Attr("value", value).Bind(name)
+    }
+
+    // Radio button + clickable caption — equivalent to WinForms'
+    // RadioButton (which has `.Text` baked in). Renders as
+    // `<label><input type=radio …> caption</label>`, so clicking
+    // the text also selects the radio. Group radios by reusing the
+    // same `name`:
+    //
+    //   Element.RadioLabel("priority", "low",    "Low")
+    //   Element.RadioLabel("priority", "normal", "Normal")
+    //   Element.RadioLabel("priority", "high",   "High")
+    public static Element RadioLabel(name: string, value: string, caption: string) {
+        let lbl: Element = new Element("label")
+        lbl.Class("amc-radio")
+        let inp: Element = new Element("input")
+        inp.Attr("type", "radio").Attr("value", value).Bind(name)
+        lbl.Children.Add(inp)
+        let txt: Element = new Element("span")
+        txt.SetText(caption)
+        lbl.Children.Add(txt)
+        return lbl
+    }
+
+    // CheckBox + clickable caption — equivalent to WinForms'
+    // CheckBox.Text. Same wrapping idea as RadioLabel.
+    //
+    //   Element.CheckBoxLabel("newsletter", "Subscribe to newsletter")
+    public static Element CheckBoxLabel(name: string, caption: string) {
+        let lbl: Element = new Element("label")
+        lbl.Class("amc-checkbox")
+        let inp: Element = new Element("input")
+        inp.Attr("type", "checkbox").Bind(name)
+        lbl.Children.Add(inp)
+        let txt: Element = new Element("span")
+        txt.SetText(caption)
+        lbl.Children.Add(txt)
+        return lbl
     }
 
     // ── WinForms-aligned widgets (v0.0.5) ─────────────────
@@ -1076,6 +1115,20 @@ public class Page {
         return this
     }
 
+    // Open a URL in the user's default OS browser (not in this
+    // webview). Validates the scheme — only http://, https://, and
+    // file:// are forwarded; anything else returns false without
+    // calling the launcher. Used by the auto-injected link
+    // interceptor (Page.ApplyTo) so <a href> clicks behave like a
+    // native app instead of replacing the rendered page.
+    public static bool OpenExternalUrl(url: string) {
+        var rc: int = 1
+        @c {
+            rc = (i64)Amalgame_UI_Web_OpenUrl(url);
+        }
+        return rc == 0
+    }
+
     // Detect the OS color scheme. Returns "light" or "dark". Order:
     //   1. `AMALGAME_UI_THEME` env var (explicit override)
     //   2. macOS `defaults read -g AppleInterfaceStyle`
@@ -1154,6 +1207,22 @@ public class Page {
         c = c + "input,select,textarea{padding:6px 8px;border:1px solid var(--amc-border);border-radius:var(--amc-radius);background:var(--amc-bg);color:var(--amc-fg);font:inherit}"
         c = c + "textarea{resize:none}"
         c = c + "input:focus,select:focus,textarea:focus{outline:2px solid var(--amc-accent);outline-offset:-1px}"
+        // v0.0.5 — color picker: the generic input rule shrinks the
+        // native swatch to ~14 px because of padding + var(--amc-bg)
+        // bg. Reset to a sane size so the selected color is actually
+        // visible. Width matches the native pickers on macOS / Windows.
+        c = c + "input[type=color]{padding:2px;min-width:44px;width:44px;min-height:32px;height:32px;background:var(--amc-bg);cursor:pointer}"
+        c = c + "input[type=color]::-webkit-color-swatch{border:1px solid var(--amc-border);border-radius:2px}"
+        c = c + "input[type=color]::-moz-color-swatch{border:1px solid var(--amc-border);border-radius:2px}"
+        // Inline label wrappers for CheckBox / Radio so clicking the
+        // text toggles the input. Used by Element.CheckBoxLabel /
+        // Element.RadioLabel.
+        c = c + "label.amc-radio,label.amc-checkbox{display:inline-flex;align-items:center;gap:6px;cursor:pointer;padding:2px 0}"
+        c = c + "label.amc-radio>input,label.amc-checkbox>input{cursor:pointer;margin:0}"
+        // Anchor links — match the theme rather than browser default
+        // blue, which clashes on dark mode.
+        c = c + "a{color:var(--amc-accent);text-decoration:none}"
+        c = c + "a:hover{text-decoration:underline}"
         c = c + "pre{padding:8px;background:var(--amc-surface);border-radius:var(--amc-radius);overflow:auto;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--amc-fg)}"
         // v0.0.5 — themed widget rules. All colors via --amc-* so
         // light/dark flip happens automatically on [data-theme].
@@ -1325,6 +1394,16 @@ public class Page {
         // (querySelector at click time, not render time) so targets
         // injected after Render still resolve.
         initJs = initJs + "window.__amc_route=function(p,id){Promise.resolve(p).then(function(r){var el=document.getElementById(id);if(!el)return;try{el.textContent=JSON.stringify(JSON.parse(r),null,2);}catch(e){el.textContent=r;}});};"
+        // External link interceptor — catches clicks on <a href> whose
+        // URL starts with http(s):// or file://, prevents the webview
+        // from navigating to it, and routes through the bound
+        // `_amc_openurl` handler which calls Page.OpenExternalUrl.
+        // Internal anchors (#fragment, javascript:) and explicitly-
+        // marked anchors (data-amc-internal="true") fall through to
+        // the browser's default behavior. The handler walks up the
+        // DOM in case the click lands on an <img> or <span> inside
+        // the <a>.
+        initJs = initJs + "document.addEventListener('click',function(e){var a=e.target;while(a&&a.tagName!=='A'){a=a.parentElement;}if(!a)return;if(a.getAttribute('data-amc-internal')==='true')return;var h=a.getAttribute('href')||'';if(/^(https?:|file:)/.test(h)){e.preventDefault();window._amc_openurl(JSON.stringify(h));}},true);"
         if (this.LockChrome) {
             initJs = initJs + "document.addEventListener('contextmenu',function(e){e.preventDefault();},true);"
             initJs = initJs + "document.addEventListener('keydown',function(e){var k=e.key;var m=e.ctrlKey||e.metaKey;if(k==='F5'){e.preventDefault();return;}if(m&&(k==='r'||k==='R')){e.preventDefault();return;}},true);"
@@ -1332,6 +1411,30 @@ public class Page {
         win.Init(initJs)
         let html: string = this.Render()
         win.SetHtml(html)
+        // Bind the link-opener handler. The closure parses the JSON-
+        // stringified URL and forwards it to the C launcher. Defined
+        // even if the page contains no <a> elements — cheap and lets
+        // dynamically-injected links work too.
+        //
+        // We call the C primitive directly inside the lambda rather
+        // than going through Page.OpenExternalUrl — amc's current
+        // codegen for static-method calls inside a closure threads
+        // the class name as a phantom `self` arg, causing a C
+        // compile error. The `@c` block sidesteps that.
+        win.Bind("_amc_openurl", (req: string) => {
+            var url: string = req
+            // Strip surrounding double quotes from JSON.stringify.
+            let n: int = String_Length(url)
+            if (n >= 2 && String_StartsWith(url, "\"")) {
+                url = String_Substring(url, 1, n - 2)
+            }
+            var rc: int = 1
+            @c {
+                rc = (i64)Amalgame_UI_Web_OpenUrl(url);
+            }
+            if (rc == 0) { return "true" }
+            return "false"
+        })
         let n: int = this.BindNames.Count()
         for i in 0..n {
             win.Bind(this.BindNames.Get(i), this.BindHandlers.Get(i))
