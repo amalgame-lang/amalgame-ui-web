@@ -172,6 +172,30 @@ class Program {
                 .AddChild(Element.Button("Save changes?").Attr("onclick", "window.amc_dlg_savecancel('');")))
             .AddChild(Element.Pre("(click a button — result echoes here)").Id("dlg-result").Size(0, 110))
 
+        // ── Tab 6 — v0.0.7 (TreeView + File dialogs) ────────
+        let tree: Element = Element.TreeView()
+            .AddChild(Element.TreeNode("src").Attr("open", "open")
+                .AddChild(Element.TreeNode("parser")
+                    .AddChild(Element.TreeLeaf("ast.am"))
+                    .AddChild(Element.TreeLeaf("parser.am")))
+                .AddChild(Element.TreeNode("generator")
+                    .AddChild(Element.TreeLeaf("c_gen.am")))
+                .AddChild(Element.TreeLeaf("main.am")))
+            .AddChild(Element.TreeNode("docs")
+                .AddChild(Element.TreeLeaf("README.md"))
+                .AddChild(Element.TreeLeaf("CHANGELOG.md")))
+            .AddChild(Element.TreeLeaf("amalgame.toml"))
+
+        let v07: Element = Element.Stack()
+            .AddChild(Element.Heading("v0.0.7 — TreeView + file dialogs"))
+            .AddChild(Element.GroupBox("TreeView (folders / files style)")
+                .AddChild(tree))
+            .AddChild(Element.GroupBox("File dialogs")
+                .AddChild(Element.Row()
+                    .AddChild(Element.Button("Open file").Attr("onclick", "window.amc_open_file('');"))
+                    .AddChild(Element.Button("Save 'demo.txt'").Attr("onclick", "window.amc_save_file('');")))
+                .AddChild(Element.Pre("(open a file or trigger a save — result echoes here)").Id("file-result").Size(0, 60)))
+
         // ── Compose the tabbed page ──────────────────────────
         // FillViewport() pins the body to 100vh — the TabControl
         // grows to fill remaining vertical space and scrolls
@@ -190,7 +214,8 @@ class Program {
                         .AddChild(Element.Tab("gal", "choices", "Selection", choiceWidgets))
                         .AddChild(Element.Tab("gal", "layouts", "Layouts", layouts))
                         .AddChild(Element.Tab("gal", "tabular", "Tables + events", tabular))
-                        .AddChild(Element.Tab("gal", "dialogs", "Dialogs", dialogs)))
+                        .AddChild(Element.Tab("gal", "dialogs", "Dialogs", dialogs))
+                        .AddChild(Element.Tab("gal", "v07", "v0.0.7", v07)))
                     .AddChild(Element.StatusStrip()
                         .AddChild(Element.Label("Ready"))
                         .AddChild(Element.Label("|"))
@@ -257,6 +282,26 @@ class Program {
         win.Bind("amc_dlg_savecancel", (req: string) => {
             Dialog.YesNoCancel(win, "Save changes?", "Do you want to save before quitting?", (r: string) => {
                 win.SetInnerHtml("dlg-result", "Save dialog result: " + r)
+                return ""
+            })
+            return "true"
+        })
+
+        // v0.0.7 — file dialogs launchers.
+        win.Bind("amc_open_file", (req: string) => {
+            Dialog.OpenFile(win, "", (name: string) => {
+                if (String_Length(name) > 0) {
+                    win.SetInnerHtml("file-result", "Opened: " + name)
+                } else {
+                    win.SetInnerHtml("file-result", "(cancelled)")
+                }
+                return ""
+            })
+            return "true"
+        })
+        win.Bind("amc_save_file", (req: string) => {
+            Dialog.SaveFile(win, "demo.txt", "Hello from amalgame-ui-web v0.0.7!\nGenerated " + String_FromInt(0) + " milliseconds ago.\n", "text/plain", (r: string) => {
+                win.SetInnerHtml("file-result", "Save triggered: " + r)
                 return ""
             })
             return "true"
