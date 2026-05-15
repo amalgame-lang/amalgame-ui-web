@@ -1,0 +1,184 @@
+import Amalgame.UI.Web
+
+// Visual gallery — opens a real webview window that surfaces every
+// widget added in v0.0.5, grouped by WinForms toolbox category. Run
+// to *see* the controls under the OS theme; the output panel at the
+// bottom of each block echoes the form payload when you click the
+// section's Submit button.
+//
+//   bash tests/build_spike.sh spike_gallery && ./build/spike_gallery
+//
+// Tabs split the gallery into manageable screens so the window
+// height stays reasonable on a laptop.
+
+class Program {
+    public static void Main() {
+        let win: Window = new Window("amalgame-ui-web v0.0.5 — gallery", 920, 720, true)
+        if (!win.IsValid()) {
+            return
+        }
+
+        // ── Tab 1 — Text inputs + buttons ────────────────────
+        let textInputs: Element = Element.Stack()
+            .AddChild(Element.Heading("Text inputs"))
+            .AddChild(Element.GroupBox("TextBox / Password / MaskedTextBox")
+                .AddChild(Element.Input("user").Attr("placeholder", "Name (TextBox)"))
+                .AddChild(Element.Password("pwd").Attr("placeholder", "Password"))
+                .AddChild(Element.MaskedTextBox("phone", "[0-9 +()-]{7,}", "tel")
+                    .Attr("placeholder", "+33 1 23 45 67 89 (MaskedTextBox tel)"))
+                .AddChild(Element.MaskedTextBox("zip", "[0-9]{5}", "numeric")
+                    .Attr("placeholder", "75001 (MaskedTextBox numeric)"))
+                .AddChild(Element.Textarea("msg")
+                    .Attr("placeholder", "Multiline Textarea")
+                    .Size(0, 80)))
+            .AddChild(Element.GroupBox("Numeric + sliders")
+                .AddChild(Element.Row()
+                    .AddChild(Element.Label("NumericUpDown:").Size(140, 0))
+                    .AddChild(Element.Number("qty", 1, 100, 1)))
+                .AddChild(Element.Row()
+                    .AddChild(Element.Label("Slider:").Size(140, 0))
+                    .AddChild(Element.Slider("vol", 0, 100, 5).Size(220, 0)))
+                .AddChild(Element.Row()
+                    .AddChild(Element.Label("ProgressBar:").Size(140, 0))
+                    .AddChild(Element.ProgressBar(42, 100))))
+            .AddChild(Element.ToolStrip()
+                .AddChild(Element.Button("Submit text")
+                    .OnClick((req: string) => req)
+                    .OnResult("out-text"))
+                .AddChild(Element.Button("Disabled").Enabled(false))
+                .AddChild(Element.Button("Help").Tooltip("Hover me — that's a tooltip!")))
+            .AddChild(Element.Pre("(click Submit)").Id("out-text").Size(0, 90))
+
+        // ── Tab 2 — Choice widgets ───────────────────────────
+        let choiceWidgets: Element = Element.Stack()
+            .AddChild(Element.Heading("Selection"))
+            .AddChild(Element.GroupBox("CheckBox / RadioButton")
+                .AddChild(Element.Row()
+                    .AddChild(Element.CheckBox("agree"))
+                    .AddChild(Element.Label("I agree to the terms (CheckBox)")))
+                .AddChild(Element.Row()
+                    .AddChild(Element.Label("Priority (RadioButton group):").Size(220, 0))
+                    .AddChild(Element.Radio("priority", "low"))
+                    .AddChild(Element.Label("low"))
+                    .AddChild(Element.Radio("priority", "normal").Attr("checked", "checked"))
+                    .AddChild(Element.Label("normal"))
+                    .AddChild(Element.Radio("priority", "high"))
+                    .AddChild(Element.Label("high"))))
+            .AddChild(Element.GroupBox("ComboBox / ListBox / CheckedListBox")
+                .AddChild(Element.Row()
+                    .AddChild(Element.Label("Theme (ComboBox):").Size(220, 0))
+                    .AddChild(Element.Select("theme")
+                        .AddChild(Element.Option("light", "Light"))
+                        .AddChild(Element.Option("dark",  "Dark"))
+                        .AddChild(Element.Option("auto",  "Auto"))))
+                .AddChild(Element.Row()
+                    .AddChild(Element.Label("Tags (ListBox multi-select):").Size(220, 0))
+                    .AddChild(Element.ListBox("tags", 4)
+                        .AddChild(Element.Option("a", "Alpha"))
+                        .AddChild(Element.Option("b", "Beta"))
+                        .AddChild(Element.Option("c", "Gamma"))
+                        .AddChild(Element.Option("d", "Delta"))))
+                .AddChild(Element.Label("Permissions (CheckedListBox):"))
+                .AddChild(Element.CheckedListBox("perms")
+                    .AddChild(Element.CheckedItem("perms", "read",  "Read"))
+                    .AddChild(Element.CheckedItem("perms", "write", "Write"))
+                    .AddChild(Element.CheckedItem("perms", "exec",  "Execute"))))
+            .AddChild(Element.GroupBox("DateTimePicker / ColorDialog inline")
+                .AddChild(Element.Row()
+                    .AddChild(Element.Label("Date:").Size(140, 0))
+                    .AddChild(Element.DatePicker("when")))
+                .AddChild(Element.Row()
+                    .AddChild(Element.Label("Time:").Size(140, 0))
+                    .AddChild(Element.TimePicker("hour")))
+                .AddChild(Element.Row()
+                    .AddChild(Element.Label("Color (ColorDialog):").Size(140, 0))
+                    .AddChild(Element.ColorPicker("tint"))))
+            .AddChild(Element.Button("Submit selection")
+                .OnClick((req: string) => req)
+                .OnResult("out-sel"))
+            .AddChild(Element.Pre("(click Submit)").Id("out-sel").Size(0, 110))
+
+        // ── Tab 3 — Layouts ──────────────────────────────────
+        let layouts: Element = Element.Stack()
+            .AddChild(Element.Heading("Layouts"))
+            .AddChild(Element.GroupBox("Stack (vertical) / Row (horizontal) / Flow (wrap)")
+                .AddChild(Element.Label("Stack — children flow vertically; Row — horizontally; Flow — wrap when overflowing."))
+                .AddChild(Element.Flow("row")
+                    .AddChild(Element.Button("flow A"))
+                    .AddChild(Element.Button("flow B"))
+                    .AddChild(Element.Button("flow C"))
+                    .AddChild(Element.Button("flow D"))
+                    .AddChild(Element.Button("flow E"))
+                    .AddChild(Element.Button("flow F"))
+                    .AddChild(Element.Button("flow G"))
+                    .AddChild(Element.Button("flow H"))))
+            .AddChild(Element.GroupBox("Grid (TableLayoutPanel)")
+                .AddChild(Element.Grid(0, 3, 8)
+                    .AddChild(Element.Button("1,1"))
+                    .AddChild(Element.Button("1,2"))
+                    .AddChild(Element.Button("1,3"))
+                    .AddChild(Element.Button("2,1"))
+                    .AddChild(Element.Button("2,2"))
+                    .AddChild(Element.Button("2,3"))))
+            .AddChild(Element.GroupBox("AbsoluteContainer + Position(x, y) — diagram-style placement")
+                .AddChild(Element.AbsoluteContainer()
+                    .Size(0, 140)
+                    .AddChild(Element.Button("(20, 10)").Position(20, 10))
+                    .AddChild(Element.Button("(160, 50)").Position(160, 50))
+                    .AddChild(Element.Button("(40, 90)").Position(40, 90))))
+
+        // ── Tab 4 — Tabular + embed + events ─────────────────
+        let fileHeaders: List<string> = ["Name", "Size", "Modified"]
+        let row1: List<string> = ["readme.md",  "2 KB",  "today"]
+        let row2: List<string> = ["facade.am", "32 KB", "10:42"]
+        let row3: List<string> = ["LICENSE",   "11 KB", "yesterday"]
+        let tabular: Element = Element.Stack()
+            .AddChild(Element.Heading("Tables, links, embed, events"))
+            .AddChild(Element.GroupBox("ListView (table)")
+                .AddChild(Element.ListView(fileHeaders)
+                    .AddChild(Element.ListViewRow(row1))
+                    .AddChild(Element.ListViewRow(row2))
+                    .AddChild(Element.ListViewRow(row3))))
+            .AddChild(Element.GroupBox("LinkLabel + PictureBox")
+                .AddChild(Element.Row()
+                    .AddChild(Element.Link("Open the Amalgame language site", "https://example.com"))
+                    .AddChild(Element.Label("→  click — opens in your browser"))))
+            .AddChild(Element.GroupBox("WebBrowser (iframe)")
+                .AddChild(Element.Iframe("https://example.com").Size(0, 200)))
+            .AddChild(Element.GroupBox("Event playground — focus / blur / type / Enter")
+                .AddChild(Element.Input("playground")
+                    .Attr("placeholder", "Try focusing, typing, blurring — every event fires")
+                    .Tooltip("Each event echoes into the output below")
+                    .OnFocus((req: string) => req)
+                    .OnBlur((req: string) => req)
+                    .OnChange((req: string) => req)
+                    .OnKeyDown((req: string) => req)
+                    .OnResult("out-events"))
+                .AddChild(Element.Pre("(focus / type to see events)").Id("out-events").Size(0, 90)))
+
+        // ── Compose the tabbed page ──────────────────────────
+        let page: Page = Page.New()
+            .SetTitle("amalgame-ui-web — gallery")
+            .SetBody(
+                Element.Stack()
+                    .AddChild(Element.Heading("amalgame-ui-web v0.0.5 — widget gallery"))
+                    .AddChild(Element.Label("Switch tabs to browse the categories. The theme (light/dark) follows your OS — change it from your desktop settings and reopen this window."))
+                    .AddChild(Element.TabControl("gal")
+                        .AddChild(Element.Tab("gal", "inputs", "Text inputs", textInputs)
+                            .Attr("checked", "checked"))
+                        .AddChild(Element.Tab("gal", "choices", "Selection", choiceWidgets))
+                        .AddChild(Element.Tab("gal", "layouts", "Layouts", layouts))
+                        .AddChild(Element.Tab("gal", "tabular", "Tables + events", tabular)))
+                    .AddChild(Element.StatusStrip()
+                        .AddChild(Element.Label("Ready"))
+                        .AddChild(Element.Label("|"))
+                        .AddChild(Element.Label("ui-web v0.0.5 gallery"))
+                        .AddChild(Element.Label("|"))
+                        .AddChild(Element.Label("OS-themed (light/dark auto)")))
+            )
+
+        page.ApplyTo(win)
+        win.Run()
+        win.Destroy()
+    }
+}
