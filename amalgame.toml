@@ -39,7 +39,7 @@ version           = "0.0.1-dev"
 license           = "Apache-2.0"
 description       = "Webview-based GUI — HTML/CSS frontends rendered by the OS webview engine (WebView2 / WKWebView / WebKitGTK)"
 authors           = ["Bastien Mouget"]
-required-amalgame = ">=0.8.10"
+required-amalgame = ">=0.8.11"
 schema-version    = 1
 
 [stdlib]
