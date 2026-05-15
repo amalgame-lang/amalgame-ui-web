@@ -822,16 +822,15 @@ public class Element {
     }
 
     // Numeric spinbox — equivalent to WinForms' `NumericUpDown`.
-    // Composite widget: a `<input type=number>` flanked by two
-    // custom +/− buttons that call `stepUp` / `stepDown` on the
-    // input. We render the buttons ourselves because WebKitGTK
-    // doesn't expose the native spinner pseudo-elements
-    // (unlike Chrome/Safari/Edge), and the empty hover-on hint
-    // was confusing on Linux.
+    // Composite widget: <input type=number> with a column of two
+    // small up/down buttons stacked vertically on the right edge,
+    // matching the native WinForms look. We render the spinner
+    // ourselves because WebKitGTK doesn't show the native
+    // ::-webkit-inner-spin-button glyphs on Linux (unlike Chrome
+    // and WebKit-on-macOS).
     //
-    // Form payload reports the input value as usual (`<input
-    // type=number>`). `min` / `max` / `step` accept 0 to leave
-    // each unset.
+    // Form payload reports the input value as usual. `min` / `max`
+    // / `step` accept 0 to leave each unset.
     public static Element Number(name: string, min: int, max: int, step: int) {
         let wrap: Element = new Element("div")
         wrap.Class("amc-numericupdown")
@@ -845,15 +844,18 @@ public class Element {
         if (step > 0) {
             inp.Attr("step", String_FromInt(step))
         }
-        let dec: Element = new Element("button")
-        dec.SetText("−").Class("amc-num-btn").Attr("type", "button")
-        dec.Attr("onclick", "(function(){var i=document.getElementById('" + inputId + "');i.stepDown(1);i.dispatchEvent(new Event('input',{bubbles:true}));i.dispatchEvent(new Event('change',{bubbles:true}));})()")
-        let inc: Element = new Element("button")
-        inc.SetText("+").Class("amc-num-btn").Attr("type", "button")
-        inc.Attr("onclick", "(function(){var i=document.getElementById('" + inputId + "');i.stepUp(1);i.dispatchEvent(new Event('input',{bubbles:true}));i.dispatchEvent(new Event('change',{bubbles:true}));})()")
-        wrap.Children.Add(dec)
+        let spin: Element = new Element("div")
+        spin.Class("amc-num-spin")
+        let up: Element = new Element("button")
+        up.SetText("▲").Class("amc-num-btn amc-num-up").Attr("type", "button")
+        up.Attr("onclick", "(function(){var i=document.getElementById('" + inputId + "');i.stepUp(1);i.dispatchEvent(new Event('input',{bubbles:true}));i.dispatchEvent(new Event('change',{bubbles:true}));})()")
+        let down: Element = new Element("button")
+        down.SetText("▼").Class("amc-num-btn amc-num-down").Attr("type", "button")
+        down.Attr("onclick", "(function(){var i=document.getElementById('" + inputId + "');i.stepDown(1);i.dispatchEvent(new Event('input',{bubbles:true}));i.dispatchEvent(new Event('change',{bubbles:true}));})()")
+        spin.Children.Add(up)
+        spin.Children.Add(down)
         wrap.Children.Add(inp)
-        wrap.Children.Add(inc)
+        wrap.Children.Add(spin)
         return wrap
     }
 
@@ -1365,14 +1367,18 @@ public class Page {
         // either; hide any residual native spinners on WebKit.
         c = c + "input[type=number]{height:32px;box-sizing:border-box}"
         c = c + "input[type=number]::-webkit-inner-spin-button,input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}"
+        // NumericUpDown composite — input + vertically-stacked
+        // up/down buttons on the right, mirroring the native
+        // WinForms look. The wrapper carries the border + height
+        // so the inner input and buttons can stay borderless.
         c = c + ".amc-numericupdown{display:inline-flex;align-items:stretch;border-radius:var(--amc-radius);overflow:hidden;border:1px solid var(--amc-border);height:32px;background:var(--amc-bg)}"
-        c = c + ".amc-numericupdown>input[type=number]{border:none;border-radius:0;height:auto;flex:1;min-width:0;text-align:center;background:transparent}"
+        c = c + ".amc-numericupdown>input[type=number]{border:none;border-radius:0;height:auto;flex:1;min-width:60px;padding:0 8px;background:transparent}"
         c = c + ".amc-numericupdown>input[type=number]:focus{outline:none}"
         c = c + ".amc-numericupdown:focus-within{outline:2px solid var(--amc-accent);outline-offset:-1px}"
-        c = c + ".amc-numericupdown>button.amc-num-btn{padding:0 10px;border:none;background:var(--amc-surface);color:var(--amc-fg);cursor:pointer;font:inherit;line-height:1;border-radius:0;min-width:28px}"
-        c = c + ".amc-numericupdown>button.amc-num-btn:first-child{border-right:1px solid var(--amc-border)}"
-        c = c + ".amc-numericupdown>button.amc-num-btn:last-child{border-left:1px solid var(--amc-border)}"
-        c = c + ".amc-numericupdown>button.amc-num-btn:hover{background:var(--amc-border)}"
+        c = c + ".amc-numericupdown>.amc-num-spin{display:flex;flex-direction:column;border-left:1px solid var(--amc-border);width:18px}"
+        c = c + ".amc-numericupdown>.amc-num-spin>button.amc-num-btn{flex:1;padding:0;border:none;background:var(--amc-surface);color:var(--amc-fg);cursor:pointer;font-size:8px;line-height:1;border-radius:0;display:flex;align-items:center;justify-content:center}"
+        c = c + ".amc-numericupdown>.amc-num-spin>button.amc-num-up{border-bottom:1px solid var(--amc-border)}"
+        c = c + ".amc-numericupdown>.amc-num-spin>button.amc-num-btn:hover{background:var(--amc-border)}"
         // v0.0.5 — color picker: the generic input rule shrinks the
         // native swatch to ~14 px because of padding + var(--amc-bg)
         // bg. Reset to a sane size so the selected color is actually
