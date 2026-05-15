@@ -14,7 +14,8 @@ class Program {
             .SetBody(
                 Element.Stack()
                     .AddChild(Element.Heading("Form"))
-                    .AddChild(Element.Input("user"))
+                    .AddChild(Element.Input("user").Size(200, 0))
+                    .AddChild(Element.Textarea("msg").Size(0, 80))
                     .AddChild(Element.CheckBox("newsletter"))
                     .AddChild(Element.Select("theme")
                         .AddChild(Element.Option("light", "Light"))
