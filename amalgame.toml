@@ -1,0 +1,78 @@
+# Package manifest — amalgame-ui-web
+#
+# Webview-based GUI for Amalgame. Backend = `webview/webview` (MIT,
+# Serge Zaitsev / Steffen André Langnes), itself a thin C/C++ shim
+# over WebView2 (Windows), WKWebView (macOS), and WebKitGTK (Linux).
+#
+# Why a webview rather than a native toolkit? See the design proposal
+# at `docs/proposals/amalgame-ui-web.md` in the main repo — short
+# version: it's the de-facto modern choice for productive apps
+# (VS Code, Slack, Discord, 1Password, Tauri ecosystem).
+#
+# v0.0.1 surface: single window, load URL or HTML, set title/size,
+# inject + eval JS, blocking event loop. Two-way IPC (`bind`
+# callbacks), native menubar, dialogs, system tray, multi-window
+# land in v0.1+ — see proposal for the v2 roadmap.
+#
+# Installation:
+#
+#   amc package add ui-web
+#
+# Build prereqs (one-time, per OS):
+#   Debian/Ubuntu :  sudo apt install libwebkit2gtk-4.1-dev libgtk-3-dev pkg-config
+#   Fedora        :  sudo dnf install webkit2gtk4.1-devel gtk3-devel
+#   Arch          :  sudo pacman -S webkit2gtk-4.1 gtk3
+#   macOS         :  nothing — WKWebView ships with the OS since 10.10
+#   Windows       :  WebView2 runtime is preinstalled on Win 11 and
+#                    on up-to-date Win 10. Older builds: ship the
+#                    bootstrapper from
+#                    https://developer.microsoft.com/microsoft-edge/webview2/
+#
+# Build configuration matrix: the cxxflags / libs below target the
+# Debian/Ubuntu WebKitGTK 4.1 layout. Other distros / macOS /
+# Windows need adjustments — see README.md "Build configuration"
+# for the full matrix.
+
+[package]
+name              = "amalgame-ui-web"
+version           = "0.0.1-dev"
+license           = "Apache-2.0"
+description       = "Webview-based GUI — HTML/CSS frontends rendered by the OS webview engine (WebView2 / WKWebView / WebKitGTK)"
+authors           = ["Bastien Mouget"]
+required-amalgame = ">=0.8.10"
+schema-version    = 1
+
+[stdlib]
+class      = "Web"
+header     = "runtime/Amalgame_UI_Web.h"
+namespace  = "Amalgame.UI.Web"
+facade     = "facade.am"
+
+# Vendored translation units compiled into the consumer binary:
+#   - webview/webview.cc   triggers the header-only C++ webview
+#                          backend (WebKitGTK / WKWebView / WebView2)
+#   - Amalgame_UI_Web.c    thin C glue the facade.am @c blocks call
+sources    = [
+    "runtime/vendor/webview/webview.cc",
+    "runtime/Amalgame_UI_Web.c",
+]
+
+# Precompile both TUs at `amc package add` time; cache .o files at
+# <pkgDir>/build/<platform>/. Otherwise every `amc test` recompiles
+# webview.cc (slow — webview.h is ~4500 lines of templated C++).
+precompile = true
+
+# Flags for .c sources (Amalgame_UI_Web.c). WEBVIEW_STATIC pins the
+# WEBVIEW_API macro in webview.h to plain `extern`, so our C
+# declarations link against the symbols emitted by webview.cc.
+cflags     = "-I./runtime/vendor/webview -DWEBVIEW_STATIC -O2"
+
+# Flags for .cc sources (webview.cc). Linux-specific include paths
+# below mirror Debian 12 / Ubuntu 22.04+ headers; macOS / Windows
+# users adjust per README.
+cxxflags   = "-I./runtime/vendor/webview -DWEBVIEW_STATIC -std=c++17 -O2 -DNDEBUG -Wno-unused-parameter -I/usr/include/webkitgtk-4.1 -I/usr/include/gtk-3.0 -I/usr/include/glib-2.0 -I/usr/lib/x86_64-linux-gnu/glib-2.0/include -I/usr/include/cairo -I/usr/include/pango-1.0 -I/usr/include/harfbuzz -I/usr/include/atk-1.0 -I/usr/include/gdk-pixbuf-2.0 -I/usr/include/libsoup-3.0 -I/usr/include/pixman-1 -I/usr/include/freetype2"
+
+# System libraries appended to the final link command (`-l<name>`).
+# `stdc++` forces g++ as the linker (needed for libstdc++ + correct
+# C++ static-init ordering per package_registry.am v0.5.3 notes).
+libs       = ["webkit2gtk-4.1", "javascriptcoregtk-4.1", "gtk-3", "gdk-3", "gobject-2.0", "glib-2.0", "gio-2.0", "stdc++"]
