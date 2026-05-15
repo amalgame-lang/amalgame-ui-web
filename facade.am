@@ -365,18 +365,78 @@ public class Element {
         return e.SetText(text)
     }
 
-    // Single-line text input. `name` is the HTML `name` attribute
-    // and the conventional way for callers to read the value back
-    // (e.g. via a form-style Bind handler reading req JSON).
+    // Single-line text input. `name` is the HTML `name` attribute —
+    // any element with a name is picked up by the auto-bridge so
+    // its value reaches OnClick handlers via the `req` JSON object.
     public static Element Input(name: string) {
         let e: Element = new Element("input")
-        return e.Attr("name", name).Attr("type", "text")
+        return e.Attr("type", "text").Bind(name)
     }
 
     // <pre> for monospace output panels.
     public static Element Pre(text: string) {
         let e: Element = new Element("pre")
         return e.SetText(text)
+    }
+
+    // ── Form-field builders (v0.0.4) ──────────────────────
+    //
+    // Every element with a `name` attribute is auto-collected by
+    // Page.ApplyTo's injected bridge. When an OnClick fires, the
+    // handler receives `req` as a JSON object whose keys are these
+    // names. Example:
+    //
+    //   Element.Stack()
+    //     .AddChild(Element.Input("user"))
+    //     .AddChild(Element.CheckBox("newsletter"))
+    //     .AddChild(Element.Button("Submit")
+    //       .OnClick((req: string) => req))
+    //
+    // Clicking the button delivers
+    //   req == "{\"user\":\"alice\",\"newsletter\":true}"
+
+    // Declarative form-key for any element. Equivalent to
+    // `.Attr("name", name)` but reads more clearly at call sites
+    // that build inputs from raw `new Element(...)`.
+    public Element Bind(name: string) {
+        return this.Attr("name", name)
+    }
+
+    // Multi-line text input. Size with `.Style("min-height:80px")`
+    // or set rows/cols via `.Attr`.
+    public static Element Textarea(name: string) {
+        let e: Element = new Element("textarea")
+        return e.Bind(name)
+    }
+
+    // <select> dropdown. Populate with `.AddChild(Element.Option(...))`.
+    // The form payload reports the `value` of the selected option.
+    public static Element Select(name: string) {
+        let e: Element = new Element("select")
+        return e.Bind(name)
+    }
+
+    // <option> for use inside Element.Select(). `value` is what the
+    // form payload reports; `label` is the visible text.
+    public static Element Option(value: string, label: string) {
+        let e: Element = new Element("option")
+        return e.Attr("value", value).SetText(label)
+    }
+
+    // Boolean checkbox. The form payload reports `true`/`false`
+    // (not the HTML default `"on"`/missing) so handlers can branch
+    // directly on the parsed JSON.
+    public static Element CheckBox(name: string) {
+        let e: Element = new Element("input")
+        return e.Attr("type", "checkbox").Bind(name)
+    }
+
+    // Single-choice radio button. Multiple Radio elements sharing
+    // the same `name` form a group; the form payload reports the
+    // `value` of the selected one (key absent if none is checked).
+    public static Element Radio(name: string, value: string) {
+        let e: Element = new Element("input")
+        return e.Attr("type", "radio").Attr("value", value).Bind(name)
     }
 }
 
@@ -448,7 +508,10 @@ public class Page {
             let bname: string = "_amc_" + String_FromInt(this.Counter)
             this.BindNames.Add(bname)
             this.BindHandlers.Add(e.ClickFn)
-            s = s + " onclick=\"window." + bname + "()\""
+            // Pass JSON-stringified form state to every handler so
+            // the AM side reads inputs declaratively — see the
+            // window.__amc_collect bridge injected by ApplyTo.
+            s = s + " onclick=\"window." + bname + "(JSON.stringify(window.__amc_collect()))\""
         }
         s = s + ">"
         if (String_Length(e.Text) > 0) {
@@ -462,9 +525,17 @@ public class Page {
         return s
     }
 
-    // Push the page into a window. Sets HTML, registers each
-    // OnClick handler via Window.Bind.
+    // Push the page into a window. Injects the form-collect bridge,
+    // sets the HTML, registers each OnClick handler via Window.Bind.
+    //
+    // The bridge (`window.__amc_collect`) walks every input/select/
+    // textarea with a `name` attribute and returns a plain object
+    // whose keys are the names and values are the field values
+    // (booleans for checkboxes; selected `value` for radio groups).
+    // Each OnClick onclick attribute stringifies that object and
+    // passes it as the single argument to the bound handler.
     public void ApplyTo(win: Window) {
+        win.Init("window.__amc_collect=function(){var o={};document.querySelectorAll('input[name],select[name],textarea[name]').forEach(function(el){var n=el.getAttribute('name');if(el.type==='checkbox'){o[n]=el.checked;}else if(el.type==='radio'){if(el.checked){o[n]=el.value;}}else{o[n]=el.value;}});return o;};")
         let html: string = this.Render()
         win.SetHtml(html)
         let n: int = this.BindNames.Count()

@@ -25,6 +25,16 @@ PKG_DIR="$(dirname "$HERE")"
 AMC_DIR="${AMC_DIR:-/home/neitsab/Développement/Amalgame}"
 AMC="${AMC:-$AMC_DIR/amc}"
 
+# Pick which spike to build (default = tests/spike.am).
+SPIKE="${1:-spike}"
+SPIKE_SRC="tests/${SPIKE}.am"
+SPIKE_BIN="build/${SPIKE}"
+if [ ! -f "$PKG_DIR/$SPIKE_SRC" ]; then
+    echo "ERROR: $SPIKE_SRC does not exist."
+    echo "Usage: $0 [spike|spike_bind|spike_builder|spike_form|<name>]"
+    exit 1
+fi
+
 cd "$PKG_DIR"
 
 # --- 0. Detect WebKitGTK variant --------------------------------------
@@ -92,28 +102,28 @@ if [ ! -f facade.o ] || \
         -o facade.o
 fi
 
-# --- 4. spike.am → spike.c --------------------------------------------
+# --- 4. <spike>.am → <spike>.c ----------------------------------------
 mkdir -p build
-echo "Compiling tests/spike.am…"
-"$AMC" -o build/spike tests/spike.am \
+echo "Compiling $SPIKE_SRC…"
+"$AMC" -o "$SPIKE_BIN" "$SPIKE_SRC" \
        --external facade.am --quiet
 
 # --- 5. Link the spike binary -----------------------------------------
 # Use gcc (not g++) for spike.c — Amalgame_Net.h passes string literals
 # as `code_string` (non-const char*) which g++ rejects in C++ mode.
 # Pull libstdc++ in explicitly so the C++ symbols from webview.o resolve.
-echo "Linking build/spike…"
+echo "Linking $SPIKE_BIN…"
 gcc -O2 \
     -I "$AMC_DIR/runtime" \
     -I runtime \
     -I runtime/vendor/webview \
-    build/spike.c \
+    "${SPIKE_BIN}.c" \
     facade.o \
     runtime/Amalgame_UI_Web.o \
     runtime/vendor/webview/webview.o \
     "$AMC_DIR/lib/libamalgame.a" \
     $(pkg-config --libs "$WEBKIT_PC") \
     -lstdc++ -lm -lgc -lcurl -lz -ldl -lpthread \
-    -o build/spike
+    -o "$SPIKE_BIN"
 
-echo "Built build/spike — run it now."
+echo "Built $SPIKE_BIN — run it now."
