@@ -424,6 +424,21 @@ public class Element {
         return this.Style("position:absolute;left:" + String_FromInt(x) + "px;top:" + String_FromInt(y) + "px")
     }
 
+    // Take whatever vertical space is left in the flex parent and
+    // scroll the overflow internally. Use inside a Stack to mark
+    // the child that should grow:
+    //
+    //   Element.Stack()
+    //     .AddChild(Element.Heading("Title"))     // natural h
+    //     .AddChild(longList.Fill())              // takes the rest
+    //     .AddChild(footerRow)                    // natural h
+    //
+    // Composes with AppendInner — the patched body still scrolls
+    // inside this element rather than pushing the page taller.
+    public Element Fill() {
+        return this.Class("amc-fill-child")
+    }
+
     // ── Common WinForms-style properties (v0.0.5) ─────────
     //
     // Setters that mirror the WinForms designer Properties pane.
@@ -881,18 +896,21 @@ public class Element {
     // Hyperlink — equivalent to WinForms' `LinkLabel`. Clicking
     // opens the URL in the user's default OS browser via the
     // window._amc_openurl bridge bound by Page.ApplyTo. The
-    // onclick attribute is emitted in-place rather than relying
-    // on a global event delegate so the webview's native
-    // navigation handler never gets a chance to swallow it.
+    // onclick attribute is emitted in-place so the webview's
+    // native navigation never sees the event.
     //
-    // For in-app navigation, attach `.Attr("data-amc-internal",
-    // "true")` and add your own .OnClick handler — the external
-    // interceptor backs off when it sees that attribute.
+    // For in-app navigation, attach an .OnClick handler — your
+    // handler runs, ours doesn't.
     public static Element Link(text: string, url: string) {
         let e: Element = new Element("a")
+        // The url goes into a JS string literal embedded inside the
+        // double-quoted HTML onclick attribute. Json.EncodeString
+        // wraps it in `"..."`; RenderElement then HTML-escapes the
+        // outer `"` to `&quot;`. The browser decodes back to a
+        // valid JS string literal at parse time. Webview wraps the
+        // bind argv as a JSON array on the wire — Page.ApplyTo's
+        // _amc_openurl closure strips that.
         let urlLit: string = Json.EncodeString(url)
-        // href stays for middle-click / right-click "Copy link";
-        // onclick hijacks the default left-click navigation.
         e.Attr("href", url)
         e.Attr("onclick", "event.preventDefault();if(window._amc_openurl)window._amc_openurl(" + urlLit + ");return false")
         return e.SetText(text)
@@ -1127,7 +1145,7 @@ public class Page {
         this.UseBaseline    = true
         this.ThemeMode      = "auto"
         this.LockChrome     = true
-        this.FillFlag       = false
+        this.FillFlag       = true
     }
 
     public static Page New() {
@@ -1225,24 +1243,23 @@ public class Page {
     }
 
     // Make the page fill the viewport vertically — the body becomes
-    // a flex column pinned to 100vh, and its first child grows to
-    // take the remaining space with `overflow:auto`. Use this when
-    // you have a tall layout (long form, ListView, embedded iframe)
-    // and want the page to NOT show a window-level scrollbar:
-    // instead, the inner scroll happens inside the panel.
+    // a flex column pinned to 100vh, its first child grows to take
+    // the remaining space, and any nested TabControl / Pre /
+    // .Fill() element scrolls internally. No window-level vscroll.
     //
-    // OFF by default to preserve the natural-flow behavior — apps
-    // that just want a centered form column don't need this.
-    //
-    //   Page.New().FillViewport()
-    //       .SetBody(Element.Stack()
-    //           .AddChild(Element.Heading("App"))
-    //           .AddChild(Element.TabControl("main") ... ))
-    //
-    // Combine with a StatusStrip — the strip stays anchored to the
-    // viewport bottom because it's `position:fixed`.
+    // ON by default since v0.0.5b — app-shell behavior matches
+    // what desktop apps look like. Opt out with NaturalFlow() if
+    // your page is a long-form document that should scroll.
     public Page FillViewport() {
         this.FillFlag = true
+        return this
+    }
+
+    // Disable FillViewport for this Page — let the document scroll
+    // naturally when it overflows the viewport (the pre-v0.0.5
+    // behavior). Useful for long-form text, settings pages, etc.
+    public Page NaturalFlow() {
+        this.FillFlag = false
         return this
     }
 
@@ -1287,14 +1304,27 @@ public class Page {
         c = c + "*{box-sizing:border-box}"
         c = c + "html{height:100%}"
         c = c + "body{margin:0;padding:16px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:14px;line-height:1.5;color:var(--amc-fg);background:var(--amc-bg);-webkit-user-select:none;user-select:none}"
-        // FillViewport mode — body becomes a 100vh flex column; its
-        // first child grows to fill remaining space and gets an
-        // inner scroll (no window-level vscroll). Activated by
-        // Page.FillViewport(), which writes class=\"amc-fill\" on
-        // <body>.
+        // FillViewport mode (on by default) — body becomes a 100vh
+        // flex column; its first child grows to fill remaining
+        // space. We intentionally don't put overflow:auto on the
+        // first child: that would put a vscroll on the root layout
+        // itself. Instead, the scroll should live on the deepest
+        // appropriate element — TabControl tab panels, ListView
+        // body, .Pre output panel. Opt out per-Page via
+        // Page.NaturalFlow() if you really want the document to
+        // scroll the old way.
         c = c + "body.amc-fill{height:100vh;overflow:hidden;display:flex;flex-direction:column;gap:8px}"
         c = c + "body.amc-fill>*{min-height:0}"
-        c = c + "body.amc-fill>*:first-child{flex:1;overflow:auto}"
+        c = c + "body.amc-fill>*:first-child{flex:1;display:flex;flex-direction:column;min-height:0}"
+        c = c + "body.amc-fill>*:first-child>*{min-height:0}"
+        // Pre / Textarea : the user-facing scroll containers when
+        // they sit inside a fill-viewport layout — they get a
+        // sane max-height so they don't push the page.
+        c = c + "body.amc-fill pre{max-height:200px}"
+        // Children marked with class amc-fill (via .Fill() helper)
+        // take whatever space is left in their flex parent and
+        // scroll internally.
+        c = c + ".amc-fill-child{flex:1;min-height:0;overflow:auto}"
         c = c + "input,select,textarea,pre{-webkit-user-select:text;user-select:text}"
         c = c + "h1,h2,h3{margin:0 0 8px}p{margin:0 0 8px}"
         c = c + "button{padding:6px 12px;border:1px solid var(--amc-border);border-radius:var(--amc-radius);background:var(--amc-surface);color:var(--amc-fg);cursor:pointer;font:inherit}"
@@ -1302,6 +1332,12 @@ public class Page {
         c = c + "input,select,textarea{padding:6px 8px;border:1px solid var(--amc-border);border-radius:var(--amc-radius);background:var(--amc-bg);color:var(--amc-fg);font:inherit}"
         c = c + "textarea{resize:none}"
         c = c + "input:focus,select:focus,textarea:focus{outline:2px solid var(--amc-accent);outline-offset:-1px}"
+        // Range slider, checkbox, radio — the generic input rule
+        // wraps them in a thick bordered box that looks awful.
+        // Reset to their native chromeless rendering.
+        c = c + "input[type=range],input[type=checkbox],input[type=radio]{padding:0;border:none;background:transparent;outline:none;width:auto}"
+        c = c + "input[type=range]{width:200px;accent-color:var(--amc-accent)}"
+        c = c + "input[type=checkbox],input[type=radio]{accent-color:var(--amc-accent);width:16px;height:16px}"
         // v0.0.5 — color picker: the generic input rule shrinks the
         // native swatch to ~14 px because of padding + var(--amc-bg)
         // bg. Reset to a sane size so the selected color is actually
@@ -1342,13 +1378,13 @@ public class Page {
         // Labels float left so they form a row at the top of the
         // .amc-tabs container; panels stack underneath and only the
         // one whose radio is :checked is shown.
-        c = c + ".amc-tabs{border:1px solid var(--amc-border);border-radius:var(--amc-radius);background:var(--amc-bg);display:flex;flex-direction:column}"
+        c = c + ".amc-tabs{border:1px solid var(--amc-border);border-radius:var(--amc-radius);background:var(--amc-bg);display:flex;flex-direction:column;flex:1;min-height:0}"
         c = c + ".amc-tab{display:contents}"
         c = c + ".amc-tabs>.amc-tab>input[type=radio]{position:absolute;opacity:0;pointer-events:none}"
         c = c + ".amc-tabs>.amc-tab>label.amc-tab-label{order:1;padding:6px 12px;cursor:pointer;border-right:1px solid var(--amc-border);color:var(--amc-muted);background:var(--amc-surface)}"
         c = c + ".amc-tabs>.amc-tab>input[type=radio]:checked+label.amc-tab-label{background:var(--amc-bg);color:var(--amc-fg);border-bottom:2px solid var(--amc-accent);margin-bottom:-1px;z-index:1}"
-        c = c + ".amc-tabs>.amc-tab>.amc-tab-panel{order:2;display:none;padding:12px;border-top:1px solid var(--amc-border);width:100%}"
-        c = c + ".amc-tabs>.amc-tab>input[type=radio]:checked~.amc-tab-panel{display:block}"
+        c = c + ".amc-tabs>.amc-tab>.amc-tab-panel{order:2;display:none;padding:12px;border-top:1px solid var(--amc-border);width:100%;flex:1;min-height:0;overflow:auto}"
+        c = c + ".amc-tabs>.amc-tab>input[type=radio]:checked~.amc-tab-panel{display:flex;flex-direction:column;gap:8px}"
         // Invalid form fields — paired with MaskedTextBox `pattern`
         // attribute. The `:invalid` pseudo-class auto-applies once
         // the user has typed; we don't want it red on first paint.
@@ -1532,16 +1568,11 @@ public class Page {
         // (querySelector at click time, not render time) so targets
         // injected after Render still resolve.
         initJs = initJs + "window.__amc_route=function(p,id){Promise.resolve(p).then(function(r){var el=document.getElementById(id);if(!el)return;try{el.textContent=JSON.stringify(JSON.parse(r),null,2);}catch(e){el.textContent=r;}});};"
-        // External link interceptor — catches clicks on <a href> whose
-        // URL starts with http(s):// or file://, prevents the webview
-        // from navigating to it, and routes through the bound
-        // `_amc_openurl` handler which calls Page.OpenExternalUrl.
-        // Internal anchors (#fragment, javascript:) and explicitly-
-        // marked anchors (data-amc-internal="true") fall through to
-        // the browser's default behavior. The handler walks up the
-        // DOM in case the click lands on an <img> or <span> inside
-        // the <a>.
-        initJs = initJs + "document.addEventListener('click',function(e){var a=e.target;while(a&&a.tagName!=='A'){a=a.parentElement;}if(!a)return;if(a.getAttribute('data-amc-internal')==='true')return;var h=a.getAttribute('href')||'';if(/^(https?:|file:)/.test(h)){e.preventDefault();window._amc_openurl(JSON.stringify(h));}},true);"
+        // External link routing happens via the inline `onclick`
+        // attribute emitted by Element.Link — direct, no global
+        // event delegate (so no race with the webview's native
+        // navigation handler, and no risk of double-firing when an
+        // <a> already carries its own onclick).
         if (this.LockChrome) {
             initJs = initJs + "document.addEventListener('contextmenu',function(e){e.preventDefault();},true);"
             initJs = initJs + "document.addEventListener('keydown',function(e){var k=e.key;var m=e.ctrlKey||e.metaKey;if(k==='F5'){e.preventDefault();return;}if(m&&(k==='r'||k==='R')){e.preventDefault();return;}},true);"
@@ -1560,17 +1591,27 @@ public class Page {
         // the class name as a phantom `self` arg, causing a C
         // compile error. The `@c` block sidesteps that.
         win.Bind("_amc_openurl", (req: string) => {
-            Console.WriteLine("[ui-web] _amc_openurl called: " + req)
-            var url: string = req
-            // Strip surrounding double quotes from JSON.stringify.
-            let n: int = String_Length(url)
-            if (n >= 2 && String_StartsWith(url, "\"")) {
-                url = String_Substring(url, 1, n - 2)
+            // webview/webview wraps every bind callback's argv as
+            // a JSON array: e.g. `window.foo("a","b")` arrives as
+            // `["a","b"]`. So `req` is `["url"]`, NOT just `url`.
+            // We strip the brackets, then the inner string's quotes,
+            // then un-escape the standard JSON sequences.
+            var s: string = req
+            let n0: int = String_Length(s)
+            if (n0 >= 2 && String_StartsWith(s, "[")) {
+                s = String_Substring(s, 1, n0 - 2)
             }
-            Console.WriteLine("[ui-web] launching url: " + url)
+            let n1: int = String_Length(s)
+            if (n1 >= 2 && String_StartsWith(s, "\"")) {
+                s = String_Substring(s, 1, n1 - 2)
+            }
+            s = String_Replace(s, "\\/",  "/")
+            s = String_Replace(s, "\\\"", "\"")
+            s = String_Replace(s, "\\\\", "\\")
+            Console.WriteLine("[ui-web] _amc_openurl -> " + s)
             var rc: int = 1
             @c {
-                rc = (i64)Amalgame_UI_Web_OpenUrl(url);
+                rc = (i64)Amalgame_UI_Web_OpenUrl(s);
             }
             Console.WriteLine("[ui-web] OpenUrl rc=" + String_FromInt(rc))
             if (rc == 0) { return "true" }
