@@ -165,4 +165,47 @@ public class Window {
             this.Slot = -1
         }
     }
+
+    // Register an Amalgame handler for `window.<name>(...)` calls
+    // made from the JS side of the webview. The handler receives
+    // the JSON-encoded JS argument list (e.g. `window.foo(1,"x")`
+    // arrives as the string `[1,"x"]`) and MUST return valid JSON —
+    // webview_return parses the result on the JS side. Examples:
+    //
+    //     win.Bind("echo",  (req: string) => req)             // echoes args back
+    //     win.Bind("ping",  (req: string) => "\"pong\"")      // string  → "pong"
+    //     win.Bind("count", (req: string) => "42")             // number  → 42
+    //     win.Bind("ok",    (req: string) => "{\"ok\":true}") // object  → {ok:true}
+    //
+    // Returning raw text without proper JSON quoting will surface
+    // as `Unhandled Promise Rejection: Error: Failed to parse
+    // binding result as JSON` on the JS side. For free-form strings
+    // with user content, escape via Amalgame.Formats.Json before
+    // wrapping in quotes.
+    //
+    // The handler MUST be a typed-param lambda: the multi-param
+    // form `(req: string) => …` tells amc to pass `req` as a
+    // pointer rather than the legacy boxed i64. Single-arg bare
+    // form `req => …` would type `req` as i64 and segfault on the
+    // first character access.
+    //
+    // Implementation note: the lambda's AmalgameClosure* is stored
+    // on the C side in a fixed-size registry (cap 64) keyed by
+    // (slot, name). The C trampoline dispatches every JS call via
+    // AmalgameClosure_call2(req, NULL) and forwards the returned
+    // code_string back to JS through webview_return automatically.
+    public void Bind(name: string, handler: Closure) {
+        let s: int = this.Slot
+        @c {
+            Amalgame_UI_Web_Bind(s, name, (void*)handler);
+        }
+    }
+
+    // Drop a previously-registered binding. Idempotent.
+    public void Unbind(name: string) {
+        let s: int = this.Slot
+        @c {
+            Amalgame_UI_Web_Unbind(s, name);
+        }
+    }
 }
