@@ -1,0 +1,45 @@
+import Amalgame.UI.Web
+
+// Spike test for amalgame-ui-web v0.0.1 — minimal "Hello" window.
+// Build (from package root, clean cwd):
+//
+//   amc --lib facade.am
+//   gcc -c a.out.c -I runtime -I runtime/vendor/webview \
+//       -I .../Amalgame/runtime -DWEBVIEW_STATIC -o facade.o
+//   g++ -c runtime/vendor/webview/webview.cc \
+//       $(pkg-config --cflags webkit2gtk-4.1) \
+//       -DWEBVIEW_STATIC -std=c++17 -O2 -o webview.o
+//   gcc -c runtime/Amalgame_UI_Web.c \
+//       -I runtime -I runtime/vendor/webview \
+//       -I .../Amalgame/runtime -DWEBVIEW_STATIC -o Amalgame_UI_Web.o
+//   amc -o spike tests/spike.am --external facade.am
+//   g++ spike.c facade.o Amalgame_UI_Web.o webview.o \
+//       .../libamalgame.a $(pkg-config --libs webkit2gtk-4.1) \
+//       -lm -lgc -lcurl -lz -o spike
+//   ./spike
+//
+// Expected: a 800x600 native window pops up titled "Amalgame.UI.Web
+// — spike", showing a styled greeting and a JS-driven counter that
+// ticks once a second. Close the window to exit.
+//
+// Linux runtime prereq:
+//   sudo apt install libwebkit2gtk-4.1-dev
+
+class Program {
+    public static void Main() {
+        let win: Window = new Window("Amalgame.UI.Web — spike", 800, 600, true)
+        if (!win.IsValid()) {
+            return
+        }
+
+        // Rich inline HTML with CSS + JS. Pre-fix cgen mis-parsed
+        // `{font-family:...}` blocks as Amalgame interpolation slots.
+        // Post-fix, IsValidInterpExpr rejects non-identifier content
+        // and braces pass through as literal characters.
+        let html: string = "<!DOCTYPE html><html><head><meta charset=utf-8><title>Amalgame</title><style>body{font-family:system-ui,sans-serif;background:linear-gradient(135deg,#1a1a2e,#16213e);color:#e8e8f0;display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;margin:0}h1{font-weight:300;letter-spacing:-0.5px;margin-bottom:0.3em}.c{font-size:3em;font-weight:200;color:#4ade80}.f{position:absolute;bottom:1em;font-size:0.8em;opacity:0.5}</style></head><body><h1>Hello from Amalgame.UI.Web</h1><div class=c id=c>0</div><div class=f>v0.0.1-dev — webview/webview backend</div><script>let n=0;setInterval(()=>{n++;document.getElementById('c').textContent=n},1000)</script></body></html>"
+
+        win.SetHtml(html)
+        win.Run()
+        win.Destroy()
+    }
+}

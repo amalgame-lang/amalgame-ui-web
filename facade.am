@@ -1,0 +1,168 @@
+namespace Amalgame.UI.Web
+
+@c {
+    #include "Amalgame_UI_Web.h"
+}
+
+// ═══════════════════════════════════════════════════════════
+//  facade.am — Webview binding (v0.0.1-dev)
+// ═══════════════════════════════════════════════════════════
+//
+// Public surface (MVP):
+//   - Window.New(title, w, h, debug)   creates an OS-native webview
+//   - window.Navigate(url)             load a URL (http/https/file)
+//   - window.SetHtml(html)             load HTML directly
+//   - window.SetTitle(title)
+//   - window.SetSize(w, h, hint)
+//   - window.Init(js)                  inject JS before page load
+//   - window.Eval(js)                  run JS now
+//   - window.Run()                     block on event loop
+//   - window.Terminate()               break out of Run
+//   - window.Destroy()                 free the webview
+//
+// Backed by webview/webview (MIT) — rendering goes to WebView2 on
+// Windows, WKWebView on macOS, WebKitGTK on Linux. App developers
+// write Amalgame for the backend and HTML/CSS/JS for the UI.
+//
+// IPC (webview_bind callback into Amalgame) is deferred to v0.0.2.
+// For v0.0.1, drive the JS side via Eval() and surface user
+// actions back to Amalgame via a local HTTP server hosted from
+// the app (or by polling a hidden DOM node via Eval roundtrips).
+
+// ─── Size hints ────────────────────────────────────────────
+//
+// Mirror webview_hint_t exactly. Used by Window.SetSize.
+
+public class WindowHint {
+    public static int None()  { return 0 }   // user can resize freely
+    public static int Min()   { return 1 }   // (w, h) is the minimum
+    public static int Max()   { return 2 }   // (w, h) is the maximum
+    public static int Fixed() { return 3 }   // (w, h) is locked
+}
+
+// ─── Window ────────────────────────────────────────────────
+
+public class Window {
+    public Slot:  int     // -1 means "not created" / already destroyed
+    public Title: string
+    public Width: int
+    public Height: int
+
+    // Create a webview window. `debug` enables DevTools (Ctrl+Shift+I
+    // on Windows/Linux; cmd+option+I on macOS once the right flag is
+    // set). Returns a Window whose Slot is -1 if creation failed —
+    // check IsValid() before using.
+    public Window(title: string, w: int, h: int, debug: bool) {
+        let s: int = 0
+        @c {
+            s = Amalgame_UI_Web_Create(debug ? 1 : 0);
+        }
+        this.Slot   = s
+        this.Title  = title
+        this.Width  = w
+        this.Height = h
+        if (s >= 0) {
+            @c {
+                Amalgame_UI_Web_SetTitle(s, title);
+                Amalgame_UI_Web_SetSize(s, w, h, 0);
+            }
+        }
+    }
+
+    public bool   IsValid()   { return this.Slot >= 0 }
+    public int    GetSlot()   { return this.Slot }
+    public string GetTitle()  { return this.Title }
+    public int    GetWidth()  { return this.Width }
+    public int    GetHeight() { return this.Height }
+
+    public void SetTitle(t: string) {
+        this.Title = t
+        let s: int = this.Slot
+        @c {
+            Amalgame_UI_Web_SetTitle(s, t);
+        }
+    }
+
+    public void SetSize(w: int, h: int, hint: int) {
+        this.Width  = w
+        this.Height = h
+        let s: int = this.Slot
+        @c {
+            Amalgame_UI_Web_SetSize(s, w, h, hint);
+        }
+    }
+
+    // Load a URL. `http://`, `https://`, `file://` and `data:` schemes
+    // all work. For local HTML packaged with the app, prefer
+    // `file:///absolute/path/to/index.html` in v0.0.1 — custom
+    // `am://` schemes land in v0.10+.
+    public void Navigate(url: string) {
+        let s: int = this.Slot
+        @c {
+            Amalgame_UI_Web_Navigate(s, url);
+        }
+    }
+
+    // Load an HTML string directly. Useful for static "about" pages
+    // and unit tests. Note: relative paths in href/src are resolved
+    // against `about:blank`, so prefer absolute URLs or inline
+    // assets when going this route.
+    public void SetHtml(html: string) {
+        let s: int = this.Slot
+        @c {
+            Amalgame_UI_Web_SetHtml(s, html);
+        }
+    }
+
+    // Inject JavaScript that runs *before every page load*. Use this
+    // for bridges that must exist on `DOMContentLoaded` — e.g.
+    // overriding `window.fetch` to route through Amalgame, or
+    // declaring a `window.amalgame = { ... }` API surface.
+    public void Init(js: string) {
+        let s: int = this.Slot
+        @c {
+            Amalgame_UI_Web_Init(s, js);
+        }
+    }
+
+    // Run JavaScript in the current page. Fire-and-forget — the
+    // result is not returned synchronously. Wire results back
+    // through DOM mutations + Eval polling, or via the local
+    // HTTP-bridge pattern, until v0.0.2 lands real bind callbacks.
+    public void Eval(js: string) {
+        let s: int = this.Slot
+        @c {
+            Amalgame_UI_Web_Eval(s, js);
+        }
+    }
+
+    // Block on the event loop until the window closes or
+    // Terminate() is called. Always call this last from main().
+    public void Run() {
+        let s: int = this.Slot
+        @c {
+            Amalgame_UI_Web_Run(s);
+        }
+    }
+
+    // Break out of Run from another thread / dispatch callback.
+    // Rarely needed in v0.0.1 (no IPC) — useful when bind lands.
+    public void Terminate() {
+        let s: int = this.Slot
+        @c {
+            Amalgame_UI_Web_Terminate(s);
+        }
+    }
+
+    // Free the webview and release its slot. Call after Run()
+    // returns; further method calls become no-ops.
+    public void Destroy() {
+        let s: int = this.Slot
+        if (s >= 0) {
+            @c {
+                Amalgame_UI_Web_Destroy(s);
+            }
+            this.Slot = -1
+        }
+    }
+}

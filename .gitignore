@@ -1,0 +1,9 @@
+# Build artefacts
+a.out.c
+spike.c
+spike
+*.o
+*.a
+
+# amc cache
+build/
