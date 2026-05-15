@@ -1459,18 +1459,24 @@ public class Page {
         // explicit +/− buttons via the Element.Number composite.
         // Pin the input height so the bare input doesn't jitter
         // either; hide any residual native spinners on WebKit.
-        c = c + "input[type=number]{height:32px;box-sizing:border-box}"
-        c = c + "input[type=number]::-webkit-inner-spin-button,input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}"
+        // Force appearance:textfield on the input itself (not just
+        // on the pseudo-elements) so WebKitGTK can never reserve
+        // inline space for the native spin-button box. The earlier
+        // hover-jitter regression came back because the pseudo was
+        // hidden but the input still allocated room for it.
+        c = c + "input[type=number]{-webkit-appearance:textfield;appearance:textfield;height:32px;box-sizing:border-box}"
+        c = c + "input[type=number]::-webkit-inner-spin-button,input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;appearance:none;display:none;margin:0;width:0;height:0}"
         // NumericUpDown composite — input + vertically-stacked
         // up/down buttons on the right, mirroring the native
-        // WinForms look. The wrapper carries the border + height
-        // so the inner input and buttons can stay borderless.
-        c = c + ".amc-numericupdown{display:inline-flex;align-items:stretch;border-radius:var(--amc-radius);overflow:hidden;border:1px solid var(--amc-border);height:32px;background:var(--amc-bg)}"
-        c = c + ".amc-numericupdown>input[type=number]{border:none;border-radius:0;height:auto;flex:1;min-width:60px;padding:0 8px;background:transparent}"
+        // WinForms look. Lock the wrapper height with both
+        // min-/max-height so no hover state on the inputs can push
+        // the surrounding row up or down.
+        c = c + ".amc-numericupdown{display:inline-flex;align-items:stretch;border-radius:var(--amc-radius);overflow:hidden;border:1px solid var(--amc-border);height:32px;min-height:32px;max-height:32px;background:var(--amc-bg);box-sizing:border-box}"
+        c = c + ".amc-numericupdown>input[type=number]{-webkit-appearance:textfield;appearance:textfield;border:none;border-radius:0;height:auto;flex:1;min-width:60px;padding:0 8px;background:transparent}"
         c = c + ".amc-numericupdown>input[type=number]:focus{outline:none}"
         c = c + ".amc-numericupdown:focus-within{outline:2px solid var(--amc-accent);outline-offset:-1px}"
-        c = c + ".amc-numericupdown>.amc-num-spin{display:flex;flex-direction:column;border-left:1px solid var(--amc-border);width:18px}"
-        c = c + ".amc-numericupdown>.amc-num-spin>button.amc-num-btn{flex:1;padding:0;border:none;background:var(--amc-surface);color:var(--amc-fg);cursor:pointer;font-size:8px;line-height:1;border-radius:0;display:flex;align-items:center;justify-content:center}"
+        c = c + ".amc-numericupdown>.amc-num-spin{display:flex;flex-direction:column;border-left:1px solid var(--amc-border);width:18px;min-width:18px;max-width:18px}"
+        c = c + ".amc-numericupdown>.amc-num-spin>button.amc-num-btn{flex:1;padding:0;margin:0;border:none;background:var(--amc-surface);color:var(--amc-fg);cursor:pointer;font-size:8px;line-height:1;border-radius:0;display:flex;align-items:center;justify-content:center;box-sizing:border-box;min-height:0}"
         c = c + ".amc-numericupdown>.amc-num-spin>button.amc-num-up{border-bottom:1px solid var(--amc-border)}"
         c = c + ".amc-numericupdown>.amc-num-spin>button.amc-num-btn:hover{background:var(--amc-border)}"
         // v0.0.5 — color picker: the generic input rule shrinks the
