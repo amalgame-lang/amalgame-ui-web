@@ -1,0 +1,32 @@
+import Amalgame.UI.Web
+
+// v0.0.7 spike — Application + Form WinForms-style entry point.
+//
+// Compare with the v0.0.5 boilerplate (Window + Page + ApplyTo +
+// Run + Destroy): the Form facade collapses that into a single
+// fluent declaration + Application.Run(). Identical visual output,
+// shorter at the call site.
+
+class Program {
+    public static void Main() {
+        let body: Element = Element.Stack()
+            .AddChild(Element.Heading("Application.Run(Form) demo"))
+            .AddChild(Element.Label("This window was opened via the Form + Application.Run facade — no manual Window allocation, no manual Page.ApplyTo. Same outcome, less ceremony."))
+            .AddChild(Element.Row()
+                .AddChild(Element.Input("user").Attr("placeholder", "Your name"))
+                .AddChild(Element.Button("Echo")
+                    .OnClick((req: string) => req)
+                    .OnResult("out")))
+            .AddChild(Element.Pre("(submit to see the form payload)").Id("out"))
+            .AddChild(Element.StatusStrip()
+                .AddChild(Element.Label("Form facade — v0.0.7")))
+
+        let f: Form = new Form("Form facade demo", 640, 420)
+        f.SetBody(body)
+        f.OnLoad((req: string) => {
+            Console.WriteLine("[form] OnLoad fired — window is rendered, bindings are live")
+            return ""
+        })
+        Application.Run(f)
+    }
+}
