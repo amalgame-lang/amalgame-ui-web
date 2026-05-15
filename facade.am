@@ -1338,6 +1338,13 @@ public class Page {
         c = c + "input[type=range],input[type=checkbox],input[type=radio]{padding:0;border:none;background:transparent;outline:none;width:auto}"
         c = c + "input[type=range]{width:200px;accent-color:var(--amc-accent)}"
         c = c + "input[type=checkbox],input[type=radio]{accent-color:var(--amc-accent);width:16px;height:16px}"
+        // <input type=number> spin buttons. WebKit hides them by
+        // default and reveals on hover, which momentarily eats
+        // ~16px of padding-right and visibly shifts the layout.
+        // Force them always-visible (opacity:1) so the box width
+        // doesn't change between hovered / non-hovered states —
+        // and the user keeps the up/down arrows.
+        c = c + "input[type=number]::-webkit-inner-spin-button,input[type=number]::-webkit-outer-spin-button{opacity:1}"
         // v0.0.5 — color picker: the generic input rule shrinks the
         // native swatch to ~14 px because of padding + var(--amc-bg)
         // bg. Reset to a sane size so the selected color is actually
@@ -1378,12 +1385,18 @@ public class Page {
         // Labels float left so they form a row at the top of the
         // .amc-tabs container; panels stack underneath and only the
         // one whose radio is :checked is shown.
-        c = c + ".amc-tabs{border:1px solid var(--amc-border);border-radius:var(--amc-radius);background:var(--amc-bg);display:flex;flex-direction:column;flex:1;min-height:0}"
+        // TabControl — CSS grid: row 1 holds the label strip
+        // (auto-placed across up to 32 columns), row 2 holds the
+        // active panel spanning the full width. The radio + sibling
+        // selector toggles which panel is visible; the panel grows
+        // with flex:1 and scrolls internally so the tab strip stays
+        // pinned at top.
+        c = c + ".amc-tabs{border:1px solid var(--amc-border);border-radius:var(--amc-radius);background:var(--amc-bg);display:grid;grid-template-columns:repeat(32,auto) 1fr;grid-template-rows:auto minmax(0,1fr);flex:1;min-width:0;min-height:0}"
         c = c + ".amc-tab{display:contents}"
-        c = c + ".amc-tabs>.amc-tab>input[type=radio]{position:absolute;opacity:0;pointer-events:none}"
-        c = c + ".amc-tabs>.amc-tab>label.amc-tab-label{order:1;padding:6px 12px;cursor:pointer;border-right:1px solid var(--amc-border);color:var(--amc-muted);background:var(--amc-surface)}"
+        c = c + ".amc-tabs>.amc-tab>input[type=radio]{display:none}"
+        c = c + ".amc-tabs>.amc-tab>label.amc-tab-label{grid-row:1;padding:6px 12px;cursor:pointer;border-right:1px solid var(--amc-border);color:var(--amc-muted);background:var(--amc-surface)}"
         c = c + ".amc-tabs>.amc-tab>input[type=radio]:checked+label.amc-tab-label{background:var(--amc-bg);color:var(--amc-fg);border-bottom:2px solid var(--amc-accent);margin-bottom:-1px;z-index:1}"
-        c = c + ".amc-tabs>.amc-tab>.amc-tab-panel{order:2;display:none;padding:12px;border-top:1px solid var(--amc-border);width:100%;flex:1;min-height:0;overflow:auto}"
+        c = c + ".amc-tabs>.amc-tab>.amc-tab-panel{grid-row:2;grid-column:1/-1;display:none;padding:12px;border-top:1px solid var(--amc-border);min-height:0;overflow:auto}"
         c = c + ".amc-tabs>.amc-tab>input[type=radio]:checked~.amc-tab-panel{display:flex;flex-direction:column;gap:8px}"
         // Invalid form fields — paired with MaskedTextBox `pattern`
         // attribute. The `:invalid` pseudo-class auto-applies once
