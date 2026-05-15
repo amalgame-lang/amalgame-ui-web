@@ -40,6 +40,49 @@ public class WindowHint {
     public static int Fixed() { return 3 }   // (w, h) is locked
 }
 
+// ─── Tiny HTML / JSON escape helpers ──────────────────────
+// (Declared before Window so Window methods that build JS
+// payloads — SetInnerHtml, AppendHtml — can use Json.EncodeString
+// without a forward-declaration trick.)
+
+public class Html {
+    // Minimal HTML escape — covers the attack surface for
+    // user-supplied text content and attribute values. Order
+    // matters: `&` first so we don't double-escape the entities
+    // we're emitting.
+    public static string Escape(s: string) {
+        var r: string = s
+        r = String_Replace(r, "&", "&amp;")
+        r = String_Replace(r, "<", "&lt;")
+        r = String_Replace(r, ">", "&gt;")
+        r = String_Replace(r, "\"", "&quot;")
+        return r
+    }
+}
+
+public class Json {
+    // JSON-encode a single string value — wraps in double quotes
+    // and escapes `\` and `"`. Newlines / CR / tabs are escaped
+    // too (Window.SetInnerHtml's payload becomes a JS string
+    // literal, which forbids raw control chars). Non-ASCII UTF-8
+    // passes through as-is — most JSON parsers accept it.
+    //
+    // For Bind handlers, wrap your free-form return strings with
+    // this so the JS side receives a proper string value rather
+    // than a parse error:
+    //
+    //     win.Bind("save", (req: string) => Json.EncodeString("ok"))
+    public static string EncodeString(s: string) {
+        var r: string = s
+        r = String_Replace(r, "\\", "\\\\")
+        r = String_Replace(r, "\"", "\\\"")
+        r = String_Replace(r, "\r", "\\r")
+        r = String_Replace(r, "\n", "\\n")
+        r = String_Replace(r, "\t", "\\t")
+        return "\"" + r + "\""
+    }
+}
+
 // ─── Window ────────────────────────────────────────────────
 
 public class Window {
@@ -134,6 +177,43 @@ public class Window {
         @c {
             Amalgame_UI_Web_Eval(s, js);
         }
+    }
+
+    // ── Partial DOM updates (v0.0.5) ──────────────────────
+    //
+    // SetInnerHtml replaces the inner HTML of `#elementId` without
+    // re-rendering the whole page. Useful for DataGrid-style apps
+    // that need to refresh just the rows, append a new row, swap
+    // a panel, etc. Cheaper than ApplyTo every time and preserves
+    // form-input state outside the patched region.
+    //
+    // The HTML is injected via element.innerHTML assignment, so
+    // inline `on<event>=` attributes survive — Page.PatchInner
+    // pairs this with new Window.Bind registrations so any
+    // freshly-rendered OnClick handler stays wired.
+    public void SetInnerHtml(elementId: string, html: string) {
+        let idLit: string = Json.EncodeString(elementId)
+        let htmlLit: string = Json.EncodeString(html)
+        let js: string = "(function(){var el=document.getElementById(" + idLit + ");if(el){el.innerHTML=" + htmlLit + ";}})();"
+        this.Eval(js)
+    }
+
+    // Append HTML as a new last-child of `#elementId`. Same
+    // contract as SetInnerHtml — use Page.PatchInner for the
+    // typed Element variant.
+    public void AppendHtml(elementId: string, html: string) {
+        let idLit: string = Json.EncodeString(elementId)
+        let htmlLit: string = Json.EncodeString(html)
+        let js: string = "(function(){var el=document.getElementById(" + idLit + ");if(el){el.insertAdjacentHTML('beforeend'," + htmlLit + ");}})();"
+        this.Eval(js)
+    }
+
+    // Remove the element with the given id from the DOM. No-op if
+    // missing. Useful for closing dialogs, dismissing rows, etc.
+    public void RemoveElement(elementId: string) {
+        let idLit: string = Json.EncodeString(elementId)
+        let js: string = "(function(){var el=document.getElementById(" + idLit + ");if(el){el.remove();}})();"
+        this.Eval(js)
     }
 
     // Block on the event loop until the window closes or
@@ -238,40 +318,6 @@ public class Window {
 
 // ─── Tiny HTML / JSON escape helpers ──────────────────────
 
-public class Html {
-    // Minimal HTML escape — covers the attack surface for
-    // user-supplied text content and attribute values. Order
-    // matters: `&` first so we don't double-escape the entities
-    // we're emitting.
-    public static string Escape(s: string) {
-        var r: string = s
-        r = String_Replace(r, "&", "&amp;")
-        r = String_Replace(r, "<", "&lt;")
-        r = String_Replace(r, ">", "&gt;")
-        r = String_Replace(r, "\"", "&quot;")
-        return r
-    }
-}
-
-public class Json {
-    // JSON-encode a single string value — wraps in double quotes
-    // and escapes `\` and `"`. Doesn't handle control characters
-    // or non-ASCII (UTF-8 passes through as-is, which most JSON
-    // parsers accept).
-    //
-    // For Bind handlers, wrap your free-form return strings with
-    // this so the JS side receives a proper string value rather
-    // than a parse error:
-    //
-    //     win.Bind("save", (req: string) => Json.EncodeString("ok"))
-    public static string EncodeString(s: string) {
-        var r: string = s
-        r = String_Replace(r, "\\", "\\\\")
-        r = String_Replace(r, "\"", "\\\"")
-        return "\"" + r + "\""
-    }
-}
-
 // ─── Element ───────────────────────────────────────────────
 //
 // A node in the HTML tree. Static builders cover the common cases
@@ -279,23 +325,33 @@ public class Json {
 // to `new Element("custom-tag")` and Attr() chains.
 
 public class Element {
-    public Tag:        string
-    public Text:       string
-    public Children:   List<Element>
-    public AttrKeys:   List<string>
-    public AttrVals:   List<string>
-    public ClickFn:    Closure
-    public HasClick:   bool
-    public StyleCss:   string   // cumulative inline style — see Style()
+    public Tag:            string
+    public Text:           string
+    public Children:       List<Element>
+    public AttrKeys:       List<string>
+    public AttrVals:       List<string>
+    // Event table — one row per (DOM event, handler, optional result
+    // routing target). Explicit setters (.OnClick / .OnChange / …)
+    // are sugar over .On(name, handler). The list-of-events shape lets
+    // user code attach any DOM event (mouseup, wheel, drop, custom-…)
+    // without facade changes — see docs/architecture.md.
+    public Events:         List<string>   // DOM event names ("click", "change", …)
+    public EventHandlers:  List<Closure>
+    public EventResults:   List<string>   // per-event #target for return routing
+    public StyleCss:       string   // cumulative inline style — see Style()
+    public ResultTargetId: string   // default routing target — applies to subsequent .On*() calls
 
     public Element(tag: string) {
-        this.Tag      = tag
-        this.Text     = ""
-        this.Children = new List<Element>()
-        this.AttrKeys = new List<string>()
-        this.AttrVals = new List<string>()
-        this.HasClick = false
-        this.StyleCss = ""
+        this.Tag            = tag
+        this.Text           = ""
+        this.Children       = new List<Element>()
+        this.AttrKeys       = new List<string>()
+        this.AttrVals       = new List<string>()
+        this.Events         = new List<string>()
+        this.EventHandlers  = new List<Closure>()
+        this.EventResults   = new List<string>()
+        this.StyleCss       = ""
+        this.ResultTargetId = ""
     }
 
     public Element SetText(t: string) {
@@ -353,14 +409,200 @@ public class Element {
         return this
     }
 
-    // Wire a click handler. Page.Render() walks the tree and
-    // allocates a JS-callable name `_amc_<n>` per OnClick; ApplyTo
-    // then registers each via Window.Bind. The handler receives a
-    // JSON args array (empty `[]` for plain clicks) and must
-    // return valid JSON.
-    public Element OnClick(handler: Closure) {
-        this.ClickFn  = handler
-        this.HasClick = true
+    // Pin the element to absolute pixel coordinates relative to its
+    // nearest positioned ancestor (or the page if none). Equivalent
+    // to ui-forms' AbsoluteLayout — useful for legacy ports or
+    // diagram-style UIs. Combine with Size() for full x/y/w/h
+    // placement:
+    //
+    //   Element.Label("X").Position(40, 80).Size(120, 24)
+    //
+    // The CSS `position:absolute` only takes effect inside a parent
+    // with `position:relative|absolute|fixed`. Use a Stack/Row/Div
+    // ancestor with `.Style("position:relative")` to scope it.
+    public Element Position(x: int, y: int) {
+        return this.Style("position:absolute;left:" + String_FromInt(x) + "px;top:" + String_FromInt(y) + "px")
+    }
+
+    // Take whatever vertical space is left in the flex parent and
+    // scroll the overflow internally. Use inside a Stack to mark
+    // the child that should grow:
+    //
+    //   Element.Stack()
+    //     .AddChild(Element.Heading("Title"))     // natural h
+    //     .AddChild(longList.Fill())              // takes the rest
+    //     .AddChild(footerRow)                    // natural h
+    //
+    // Composes with AppendInner — the patched body still scrolls
+    // inside this element rather than pushing the page taller.
+    public Element Fill() {
+        return this.Class("amc-fill-child")
+    }
+
+    // ── Common WinForms-style properties (v0.0.5) ─────────
+    //
+    // Setters that mirror the WinForms designer Properties pane.
+    // Each is sugar over .Attr or .Style; the names are chosen to
+    // make WinForms ports read naturally.
+
+    // WinForms .Visible — toggles `display:none`. Falsy hides the
+    // element entirely (no layout space taken).
+    public Element Visible(v: bool) {
+        if (!v) {
+            this.Style("display:none")
+        }
+        return this
+    }
+
+    // WinForms .Enabled — sets the HTML `disabled` attribute on
+    // form controls AND dims non-input elements via opacity +
+    // pointer-events. Falsy disables interaction.
+    public Element Enabled(e: bool) {
+        if (!e) {
+            this.Attr("disabled", "disabled")
+            this.Style("opacity:0.6;pointer-events:none")
+        }
+        return this
+    }
+
+    // WinForms .ToolTip — sets the HTML `title` attribute. Browsers
+    // render a native OS-styled tooltip on hover, themed by the OS
+    // (no CSS variables needed).
+    public Element Tooltip(text: string) {
+        return this.Attr("title", text)
+    }
+
+    // WinForms .TabIndex — keyboard focus order. Pass 0 to leave
+    // the default natural-order untouched; positive values force
+    // an explicit position.
+    public Element TabIndex(n: int) {
+        return this.Attr("tabindex", String_FromInt(n))
+    }
+
+    // WinForms .ForeColor — shorthand for `color: <css>`. Accepts
+    // any CSS color: `#abc`, `rgb(…)`, `var(--amc-accent)`, named.
+    public Element ForeColor(css: string) {
+        return this.Style("color:" + css)
+    }
+
+    // WinForms .BackColor — shorthand for `background: <css>`.
+    public Element BackColor(css: string) {
+        return this.Style("background:" + css)
+    }
+
+    // WinForms .Font — shorthand for `font-family` + `font-size`.
+    // Pass `""` to leave the family at the inherited default; pass
+    // `0` to leave the size untouched.
+    public Element Font(family: string, sizePx: int) {
+        if (String_Length(family) > 0) {
+            this.Style("font-family:" + family)
+        }
+        if (sizePx > 0) {
+            this.Style("font-size:" + String_FromInt(sizePx) + "px")
+        }
+        return this
+    }
+
+    // WinForms .Tag — arbitrary string payload round-tripped via a
+    // `data-tag` attribute. Useful for stamping IDs without using
+    // the HTML `id` attribute (which must be globally unique).
+    // Named DataTag to avoid clashing with the .Tag field that
+    // stores the HTML element tag name (div/span/input/…).
+    public Element DataTag(data: string) {
+        return this.Attr("data-tag", data)
+    }
+
+    // Escape hatch: inject a raw HTML string as a child. The dev
+    // is responsible for escaping. Useful when wrapping a JS lib
+    // (Plotly, CodeMirror, Tabulator) that wants to render into a
+    // specific markup chunk. The raw string is appended after any
+    // existing children and Text content.
+    //
+    //   Element.Div().Id("plot").Raw("<svg width=200 height=200>…</svg>")
+    public Element Raw(html: string) {
+        let child: Element = new Element("__raw__")
+        child.Text = html
+        this.Children.Add(child)
+        return this
+    }
+
+    // ── Event wiring (uniform DOM-event model) ────────────
+    //
+    // Every event handler is routed through Window.Bind: Page.Render
+    // allocates a JS-callable name `_amc_<n>` per event, and the
+    // generated `on<event>=` attribute calls it with the JSON form
+    // state (auto-collected by window.__amc_collect, injected by
+    // Page.ApplyTo). Handlers must return valid JSON; the return
+    // is discarded unless OnResult routed it into a target.
+    //
+    // The explicit setters (.OnClick / .OnChange / .OnFocus / …)
+    // are sugar over .On(eventName, handler). The generic form is
+    // the extension hatch — custom components can attach `wheel`,
+    // `drop`, `custom-foo`, anything supported by the browser.
+
+    // Generic event binder. Attaches `handler` to the named DOM
+    // event ("click", "change", "mouseenter", …). The current
+    // `ResultTargetId` (set via OnResult) is captured at the time
+    // of this call, so OnResult must be called BEFORE the event
+    // setter to take effect.
+    public Element On(eventName: string, handler: Closure) {
+        this.Events.Add(eventName)
+        this.EventHandlers.Add(handler)
+        this.EventResults.Add(this.ResultTargetId)
+        return this
+    }
+
+    // Route subsequent event handler return values into another
+    // element's text content. Use with any `.On*` setter — the
+    // bridge awaits the handler's returned JSON, pretty-prints it
+    // (falling back to the raw string if it isn't valid JSON), and
+    // writes the result into `document.getElementById(targetId)`.
+    //
+    //   Element.Button("Submit")
+    //       .OnResult("out")            // route comes first
+    //       .OnClick((req) => req)
+    //   Element.Pre("").Id("out")
+    //
+    // For backwards compat with the v0.0.5 pre-refactor pattern
+    // (`.OnClick(h).OnResult("out")` — setter THEN route), Page.Render
+    // applies `ResultTargetId` to any event whose captured target
+    // is empty. Pass "" to reset.
+    public Element OnResult(targetId: string) {
+        this.ResultTargetId = targetId
+        return this
+    }
+
+    // Common DOM events — sugar over .On(name, h). The mapping
+    // mirrors WinForms event names where possible:
+    //
+    //   WinForms.Click           → .OnClick(h)        / "click"
+    //   WinForms.DoubleClick     → .OnDblClick(h)     / "dblclick"
+    //   WinForms.TextChanged     → .OnChange(h)       / "change" + "input"
+    //   WinForms.GotFocus/Enter  → .OnFocus(h)        / "focus"
+    //   WinForms.LostFocus/Leave → .OnBlur(h)         / "blur"
+    //   WinForms.MouseEnter      → .OnMouseEnter(h)   / "mouseenter"
+    //   WinForms.MouseLeave      → .OnMouseLeave(h)   / "mouseleave"
+    //   WinForms.KeyDown         → .OnKeyDown(h)      / "keydown"
+    //   WinForms.KeyUp           → .OnKeyUp(h)        / "keyup"
+    public Element OnClick(handler: Closure)      { return this.On("click",      handler) }
+    public Element OnDblClick(handler: Closure)   { return this.On("dblclick",   handler) }
+    public Element OnFocus(handler: Closure)      { return this.On("focus",      handler) }
+    public Element OnBlur(handler: Closure)       { return this.On("blur",       handler) }
+    public Element OnMouseEnter(handler: Closure) { return this.On("mouseenter", handler) }
+    public Element OnMouseLeave(handler: Closure) { return this.On("mouseleave", handler) }
+    public Element OnKeyDown(handler: Closure)    { return this.On("keydown",    handler) }
+    public Element OnKeyUp(handler: Closure)      { return this.On("keyup",      handler) }
+
+    // OnChange registers two underlying DOM events so the handler
+    // fires on commit (change — selects, radios, checkboxes, text
+    // input blur) AND on live input (textareas + text inputs).
+    // The two calls dedupe themselves via the bound name; the
+    // handler runs once per logical change.
+    public Element OnChange(handler: Closure) {
+        this.On("change", handler)
+        if (this.Tag == "textarea" || this.Tag == "input") {
+            this.On("input", handler)
+        }
         return this
     }
 
@@ -381,6 +623,33 @@ public class Element {
     public static Element Row() {
         let e: Element = new Element("div")
         return e.Style("display:flex;flex-direction:row;gap:8px;align-items:center")
+    }
+
+    // CSS Grid layout — equivalent to ui-forms' GridLayout. Children
+    // flow left-to-right, top-to-bottom into `rows` × `cols` cells.
+    // `gap` is the inter-cell spacing in pixels (use 0 for none).
+    // Pass 0 for `rows` to leave row count implicit — useful when
+    // you want a fixed-column grid with variable rows. Override
+    // individual cell placement on children via inline style
+    // (`.Style("grid-column:span 2")` etc.).
+    public static Element Grid(rows: int, cols: int, gap: int) {
+        let e: Element = new Element("div")
+        var s: string = "display:grid;grid-template-columns:repeat(" + String_FromInt(cols) + ",1fr)"
+        if (rows > 0) {
+            s = s + ";grid-template-rows:repeat(" + String_FromInt(rows) + ",auto)"
+        }
+        s = s + ";gap:" + String_FromInt(gap) + "px"
+        return e.Style(s)
+    }
+
+    // Absolutely-positioned container — equivalent to ui-forms'
+    // AbsoluteLayout. Children typically use `.Position(x, y)` to
+    // place themselves relative to this container; without
+    // `position:relative` here, absolute children would resolve
+    // against the document body instead.
+    public static Element AbsoluteContainer() {
+        let e: Element = new Element("div")
+        return e.Style("position:relative")
     }
 
     // Plain text paragraph.
@@ -453,6 +722,28 @@ public class Element {
         return e.Bind(name)
     }
 
+    // Multi-select listbox — equivalent to ui-forms' ListBox. Same
+    // structure as Select() (populate with Option children), but
+    // renders as an open scrolling list with multi-selection
+    // enabled. `size` is the visible row count (HTML `size`
+    // attribute); pass 0 to let the browser decide.
+    //
+    // Form payload note: <select multiple> doesn't emit a value in
+    // the default __amc_collect payload — when reading the
+    // selection you should attach an .OnChange handler that reads
+    // `document.getElementById(name).selectedOptions` from a
+    // companion JS snippet, or pass selected values manually via
+    // a hidden field. Auto-collect for multi-select is on the
+    // roadmap; see CHANGELOG.
+    public static Element ListBox(name: string, size: int) {
+        let e: Element = new Element("select")
+        e.Bind(name).Attr("multiple", "multiple")
+        if (size > 0) {
+            e.Attr("size", String_FromInt(size))
+        }
+        return e
+    }
+
     // <option> for use inside Element.Select(). `value` is what the
     // form payload reports; `label` is the visible text.
     public static Element Option(value: string, label: string) {
@@ -471,9 +762,372 @@ public class Element {
     // Single-choice radio button. Multiple Radio elements sharing
     // the same `name` form a group; the form payload reports the
     // `value` of the selected one (key absent if none is checked).
+    // Pair with a separate <label> if you need a clickable caption,
+    // or use Element.RadioLabel(...) for a single wrapped builder.
     public static Element Radio(name: string, value: string) {
         let e: Element = new Element("input")
         return e.Attr("type", "radio").Attr("value", value).Bind(name)
+    }
+
+    // Radio button + clickable caption — equivalent to WinForms'
+    // RadioButton (which has `.Text` baked in). Renders as
+    // `<label><input type=radio …> caption</label>`, so clicking
+    // the text also selects the radio. Group radios by reusing the
+    // same `name`:
+    //
+    //   Element.RadioLabel("priority", "low",    "Low")
+    //   Element.RadioLabel("priority", "normal", "Normal")
+    //   Element.RadioLabel("priority", "high",   "High")
+    public static Element RadioLabel(name: string, value: string, caption: string) {
+        let lbl: Element = new Element("label")
+        lbl.Class("amc-radio")
+        let inp: Element = new Element("input")
+        inp.Attr("type", "radio").Attr("value", value).Bind(name)
+        lbl.Children.Add(inp)
+        let txt: Element = new Element("span")
+        txt.SetText(caption)
+        lbl.Children.Add(txt)
+        return lbl
+    }
+
+    // CheckBox + clickable caption — equivalent to WinForms'
+    // CheckBox.Text. Same wrapping idea as RadioLabel.
+    //
+    //   Element.CheckBoxLabel("newsletter", "Subscribe to newsletter")
+    public static Element CheckBoxLabel(name: string, caption: string) {
+        let lbl: Element = new Element("label")
+        lbl.Class("amc-checkbox")
+        let inp: Element = new Element("input")
+        inp.Attr("type", "checkbox").Bind(name)
+        lbl.Children.Add(inp)
+        let txt: Element = new Element("span")
+        txt.SetText(caption)
+        lbl.Children.Add(txt)
+        return lbl
+    }
+
+    // ── WinForms-aligned widgets (v0.0.5) ─────────────────
+    //
+    // The webview-side equivalents of common .NET / WinForms /
+    // Visual-Studio toolbox controls. Each maps to a single HTML5
+    // input type or element; OS form widgets do the heavy lifting
+    // (native pickers, validation, accessibility).
+
+    // Masked text input — equivalent to WinForms' `TextBox` with
+    // `PasswordChar` set. Browsers show bullets and keep the value
+    // out of the DOM-visible HTML when the user pastes.
+    public static Element Password(name: string) {
+        let e: Element = new Element("input")
+        return e.Attr("type", "password").Bind(name)
+    }
+
+    // Numeric spinbox — equivalent to WinForms' `NumericUpDown`.
+    // Composite widget: <input type=number> with a column of two
+    // small up/down buttons stacked vertically on the right edge,
+    // matching the native WinForms look. We render the spinner
+    // ourselves because WebKitGTK doesn't show the native
+    // ::-webkit-inner-spin-button glyphs on Linux (unlike Chrome
+    // and WebKit-on-macOS).
+    //
+    // Form payload reports the input value as usual. `min` / `max`
+    // / `step` accept 0 to leave each unset.
+    public static Element Number(name: string, min: int, max: int, step: int) {
+        let wrap: Element = new Element("div")
+        wrap.Class("amc-numericupdown")
+        let inputId: string = "amc-num-" + name
+        let inp: Element = new Element("input")
+        inp.Attr("type", "number").Attr("id", inputId).Bind(name)
+        if (min != 0 || max != 0) {
+            inp.Attr("min", String_FromInt(min))
+            inp.Attr("max", String_FromInt(max))
+        }
+        if (step > 0) {
+            inp.Attr("step", String_FromInt(step))
+        }
+        let spin: Element = new Element("div")
+        spin.Class("amc-num-spin")
+        let up: Element = new Element("button")
+        up.SetText("▲").Class("amc-num-btn amc-num-up").Attr("type", "button")
+        up.Attr("onclick", "(function(){var i=document.getElementById('" + inputId + "');i.stepUp(1);i.dispatchEvent(new Event('input',{bubbles:true}));i.dispatchEvent(new Event('change',{bubbles:true}));})()")
+        let down: Element = new Element("button")
+        down.SetText("▼").Class("amc-num-btn amc-num-down").Attr("type", "button")
+        down.Attr("onclick", "(function(){var i=document.getElementById('" + inputId + "');i.stepDown(1);i.dispatchEvent(new Event('input',{bubbles:true}));i.dispatchEvent(new Event('change',{bubbles:true}));})()")
+        spin.Children.Add(up)
+        spin.Children.Add(down)
+        wrap.Children.Add(inp)
+        wrap.Children.Add(spin)
+        return wrap
+    }
+
+    // Range slider — equivalent to WinForms' `TrackBar`. Form
+    // payload reports the numeric value as a string.
+    public static Element Slider(name: string, min: int, max: int, step: int) {
+        let e: Element = new Element("input")
+        e.Attr("type", "range").Bind(name)
+            .Attr("min", String_FromInt(min))
+            .Attr("max", String_FromInt(max))
+        if (step > 0) {
+            e.Attr("step", String_FromInt(step))
+        }
+        return e
+    }
+
+    // Native date picker — equivalent to WinForms' `DateTimePicker`
+    // (date-only). Form payload reports an ISO date string
+    // (`YYYY-MM-DD`).
+    public static Element DatePicker(name: string) {
+        let e: Element = new Element("input")
+        return e.Attr("type", "date").Bind(name)
+    }
+
+    // Native time picker. Form payload reports `HH:MM` (24-hour).
+    public static Element TimePicker(name: string) {
+        let e: Element = new Element("input")
+        return e.Attr("type", "time").Bind(name)
+    }
+
+    // Native color picker — equivalent to WinForms' `ColorDialog`
+    // exposed inline. Form payload reports `#RRGGBB`.
+    public static Element ColorPicker(name: string) {
+        let e: Element = new Element("input")
+        return e.Attr("type", "color").Bind(name)
+    }
+
+    // Read-only progress indicator — equivalent to WinForms'
+    // `ProgressBar`. `max` defaults to 100 when 0; pass a negative
+    // value to render an indeterminate bar.
+    public static Element ProgressBar(value: int, max: int) {
+        let e: Element = new Element("progress")
+        if (value >= 0) {
+            e.Attr("value", String_FromInt(value))
+        }
+        if (max > 0) {
+            e.Attr("max", String_FromInt(max))
+        }
+        return e
+    }
+
+    // Inline image. `src` accepts a `file://` URL (local asset),
+    // an `https://` URL, or a `data:image/...` URL.
+    public static Element Image(src: string) {
+        let e: Element = new Element("img")
+        return e.Attr("src", src)
+    }
+
+    // Hyperlink — equivalent to WinForms' `LinkLabel`. Clicking
+    // opens the URL in the user's default OS browser via the
+    // window._amc_openurl bridge bound by Page.ApplyTo. The
+    // onclick attribute is emitted in-place so the webview's
+    // native navigation never sees the event.
+    //
+    // For in-app navigation, attach an .OnClick handler — your
+    // handler runs, ours doesn't.
+    public static Element Link(text: string, url: string) {
+        let e: Element = new Element("a")
+        // The url goes into a JS string literal embedded inside the
+        // double-quoted HTML onclick attribute. Json.EncodeString
+        // wraps it in `"..."`; RenderElement then HTML-escapes the
+        // outer `"` to `&quot;`. The browser decodes back to a
+        // valid JS string literal at parse time. Webview wraps the
+        // bind argv as a JSON array on the wire — Page.ApplyTo's
+        // _amc_openurl closure strips that.
+        let urlLit: string = Json.EncodeString(url)
+        e.Attr("href", url)
+        e.Attr("onclick", "event.preventDefault();if(window._amc_openurl)window._amc_openurl(" + urlLit + ");return false")
+        return e.SetText(text)
+    }
+
+    // ── Additional WinForms widgets (v0.0.5 greens) ───────
+
+    // Alias for Image(src) — matches the WinForms toolbox name.
+    public static Element PictureBox(src: string) {
+        return Element.Image(src)
+    }
+
+    // Alias for Div() — matches the WinForms toolbox name. Reads
+    // more naturally at WinForms-port call sites.
+    public static Element Panel() {
+        return Element.Div()
+    }
+
+    // <fieldset> with a <legend> — equivalent to WinForms' GroupBox.
+    // Theme: native browser `fieldset` styling overridden in the
+    // baseline to use --amc-border / --amc-fg.
+    //
+    //   Element.GroupBox("Personal info")
+    //       .AddChild(Element.Input("name"))
+    //       .AddChild(Element.Input("email"))
+    public static Element GroupBox(title: string) {
+        let e: Element = new Element("fieldset")
+        e.Class("amc-groupbox")
+        let legend: Element = new Element("legend")
+        legend.SetText(title)
+        e.Children.Add(legend)
+        return e
+    }
+
+    // Flex container with wrap — equivalent to WinForms'
+    // FlowLayoutPanel. `direction` is "row" (LTR wrap) or
+    // "column" (TTB wrap). Children flow naturally; gap is 8px.
+    public static Element Flow(direction: string) {
+        let e: Element = new Element("div")
+        var dir: string = "row"
+        if (direction == "column") {
+            dir = "column"
+        }
+        return e.Style("display:flex;flex-direction:" + dir + ";flex-wrap:wrap;gap:8px")
+    }
+
+    // Fixed-bottom status bar — equivalent to WinForms' StatusStrip.
+    // Anchors to the bottom of the viewport via `position:fixed`.
+    // Add segments as children (Label, Pre, …). The baseline themes
+    // it with --amc-surface background + --amc-border top border.
+    public static Element StatusStrip() {
+        let e: Element = new Element("footer")
+        return e.Class("amc-statusstrip")
+    }
+
+    // Horizontal button bar — equivalent to WinForms' ToolStrip.
+    // Themed via the `.amc-toolstrip` class in the baseline (smaller
+    // padding, --amc-surface background).
+    public static Element ToolStrip() {
+        let e: Element = new Element("div")
+        return e.Class("amc-toolstrip")
+            .Style("display:flex;flex-direction:row;gap:4px;align-items:center;padding:4px 8px")
+    }
+
+    // Embedded webpage — equivalent to WinForms' WebBrowser (which
+    // itself wraps IE). Useful for embedding docs / preview panels
+    // inside the main app. The iframe inherits the page's
+    // --amc-border by default.
+    public static Element Iframe(url: string) {
+        let e: Element = new Element("iframe")
+        return e.Attr("src", url).Class("amc-iframe")
+    }
+
+    // Masked text input — equivalent to WinForms' MaskedTextBox.
+    // `pattern` is a JS RegExp source (HTML5 `pattern` attr) used
+    // for native form validation; `mode` is the soft-keyboard hint
+    // ("numeric" / "tel" / "email" / "url" / "decimal" / "" for
+    // default text). Browsers show the matching keyboard on mobile
+    // and reject submissions that don't match the pattern.
+    //
+    //   Element.MaskedTextBox("phone", "[0-9 +()-]{7,}", "tel")
+    public static Element MaskedTextBox(name: string, pattern: string, mode: string) {
+        let e: Element = new Element("input")
+        e.Attr("type", "text").Bind(name)
+        if (String_Length(pattern) > 0) {
+            e.Attr("pattern", pattern)
+        }
+        if (String_Length(mode) > 0) {
+            e.Attr("inputmode", mode)
+        }
+        return e
+    }
+
+    // Multi-select checkbox list — equivalent to WinForms'
+    // CheckedListBox. Each child is wired as a <li><label><input
+    // type=checkbox name=<name> value=<itemValue>>…</label></li>
+    // by Element.CheckedItem. Auto-collect reports an array of
+    // checked values under `<name>` (planned v0.0.6); for now
+    // attach OnChange and read via Window.Eval.
+    public static Element CheckedListBox(name: string) {
+        let e: Element = new Element("ul")
+        return e.Class("amc-checkedlistbox").Attr("data-name", name)
+    }
+
+    // One row in a CheckedListBox. Use as a child of
+    // Element.CheckedListBox(name); `value` is the form value
+    // reported when checked, `label` is the visible text.
+    public static Element CheckedItem(name: string, value: string, label: string) {
+        let li: Element = new Element("li")
+        let lbl: Element = new Element("label")
+        let inp: Element = new Element("input")
+        inp.Attr("type", "checkbox").Attr("value", value).Bind(name)
+        lbl.Children.Add(inp)
+        let txt: Element = new Element("span")
+        txt.SetText(" " + label)
+        lbl.Children.Add(txt)
+        li.Children.Add(lbl)
+        return li
+    }
+
+    // Tabular list view — equivalent to WinForms' ListView in
+    // Details mode. `headers` is the column titles. `bodyId` is
+    // the DOM id stamped on the inner `<tbody>` — pass "" to skip,
+    // pass a non-empty string to make the body addressable by
+    // `Page.AppendInner(win, bodyId, …)` / `Page.PatchInner(…)`
+    // for live row updates.
+    public static Element ListView(headers: List<string>, bodyId: string) {
+        let e: Element = new Element("table")
+        e.Class("amc-listview")
+        let thead: Element = new Element("thead")
+        let row:   Element = new Element("tr")
+        let nh: int = headers.Count()
+        for i in 0..nh {
+            let th: Element = new Element("th")
+            th.SetText(headers.Get(i))
+            row.Children.Add(th)
+        }
+        thead.Children.Add(row)
+        e.Children.Add(thead)
+        let tbody: Element = new Element("tbody")
+        tbody.Class("amc-listview-body")
+        if (String_Length(bodyId) > 0) {
+            tbody.Attr("id", bodyId)
+        }
+        e.Children.Add(tbody)
+        return e
+    }
+
+    // One ListView row. Pass a list of cell values matching the
+    // header count. Append as a child of the ListView; rows end
+    // up inside its <tbody>.
+    public static Element ListViewRow(values: List<string>) {
+        let tr: Element = new Element("tr")
+        let nv: int = values.Count()
+        for i in 0..nv {
+            let td: Element = new Element("td")
+            td.SetText(values.Get(i))
+            tr.Children.Add(td)
+        }
+        return tr
+    }
+
+    // CSS-only tab control — equivalent to WinForms' TabControl.
+    // Uses radio-button + label + sibling-selector trick so no JS
+    // is needed. `groupName` must be unique on the page (the
+    // radios share it). Populate via .AddChild(Element.Tab(...)).
+    //
+    //   Element.TabControl("settings")
+    //       .AddChild(Element.Tab("settings", "general", "General", general).Attr("checked","checked"))
+    //       .AddChild(Element.Tab("settings", "advanced", "Advanced", advanced))
+    //
+    // The first Tab to set `checked="checked"` is the default
+    // active panel.
+    public static Element TabControl(groupName: string) {
+        let e: Element = new Element("div")
+        return e.Class("amc-tabs").Attr("data-group", groupName)
+    }
+
+    // One tab + its panel. Renders as an <input type=radio> +
+    // <label> + <div class=amc-tab-panel> sibling triple. CSS in
+    // the baseline shows the panel adjacent to the checked radio
+    // and hides the rest.
+    public static Element Tab(groupName: string, id: string, label: string, body: Element) {
+        let wrap: Element = new Element("div")
+        wrap.Class("amc-tab")
+        let radio: Element = new Element("input")
+        radio.Attr("type", "radio").Attr("name", groupName).Attr("id", "tab-" + groupName + "-" + id)
+        let lbl: Element = new Element("label")
+        lbl.Attr("for", "tab-" + groupName + "-" + id).SetText(label).Class("amc-tab-label")
+        let panel: Element = new Element("div")
+        panel.Class("amc-tab-panel")
+        panel.Children.Add(body)
+        wrap.Children.Add(radio)
+        wrap.Children.Add(lbl)
+        wrap.Children.Add(panel)
+        return wrap
     }
 }
 
@@ -499,6 +1153,7 @@ public class Page {
     public UseBaseline:    bool           // inject the baseline <style> in <head>?
     public ThemeMode:      string         // "auto" | "light" | "dark" (controls <html data-theme>)
     public LockChrome:     bool           // block right-click menu + F5/Ctrl+R/Cmd+R reloads?
+    public FillFlag:       bool           // body fills the viewport (flex col, root child scrolls)
 
     public Page() {
         this.Title          = ""
@@ -511,6 +1166,7 @@ public class Page {
         this.UseBaseline    = true
         this.ThemeMode      = "auto"
         this.LockChrome     = true
+        this.FillFlag       = true
     }
 
     public static Page New() {
@@ -562,6 +1218,20 @@ public class Page {
         return this
     }
 
+    // Open a URL in the user's default OS browser (not in this
+    // webview). Validates the scheme — only http://, https://, and
+    // file:// are forwarded; anything else returns false without
+    // calling the launcher. Used by the auto-injected link
+    // interceptor (Page.ApplyTo) so <a href> clicks behave like a
+    // native app instead of replacing the rendered page.
+    public static bool OpenExternalUrl(url: string) {
+        var rc: int = 1
+        @c {
+            rc = (i64)Amalgame_UI_Web_OpenUrl(url);
+        }
+        return rc == 0
+    }
+
     // Detect the OS color scheme. Returns "light" or "dark". Order:
     //   1. `AMALGAME_UI_THEME` env var (explicit override)
     //   2. macOS `defaults read -g AppleInterfaceStyle`
@@ -590,6 +1260,27 @@ public class Page {
     //   Page.New().AllowBrowserDefaults() ...
     public Page AllowBrowserDefaults() {
         this.LockChrome = false
+        return this
+    }
+
+    // Make the page fill the viewport vertically — the body becomes
+    // a flex column pinned to 100vh, its first child grows to take
+    // the remaining space, and any nested TabControl / Pre /
+    // .Fill() element scrolls internally. No window-level vscroll.
+    //
+    // ON by default since v0.0.5b — app-shell behavior matches
+    // what desktop apps look like. Opt out with NaturalFlow() if
+    // your page is a long-form document that should scroll.
+    public Page FillViewport() {
+        this.FillFlag = true
+        return this
+    }
+
+    // Disable FillViewport for this Page — let the document scroll
+    // naturally when it overflows the viewport (the pre-v0.0.5
+    // behavior). Useful for long-form text, settings pages, etc.
+    public Page NaturalFlow() {
+        this.FillFlag = false
         return this
     }
 
@@ -632,7 +1323,29 @@ public class Page {
         c = c + "[data-theme=dark]{--amc-bg:#1e1e1e;--amc-fg:#e8e8e8;--amc-muted:#9a9a9a;--amc-border:#404040;--amc-surface:#2a2a2a;--amc-accent:#4a9eff;color-scheme:dark}"
         c = c + "@media(prefers-color-scheme:dark){:root:not([data-theme=light]){--amc-bg:#1e1e1e;--amc-fg:#e8e8e8;--amc-muted:#9a9a9a;--amc-border:#404040;--amc-surface:#2a2a2a;--amc-accent:#4a9eff;color-scheme:dark}}"
         c = c + "*{box-sizing:border-box}"
+        c = c + "html{height:100%}"
         c = c + "body{margin:0;padding:16px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:14px;line-height:1.5;color:var(--amc-fg);background:var(--amc-bg);-webkit-user-select:none;user-select:none}"
+        // FillViewport mode (on by default) — body becomes a 100vh
+        // flex column; its first child grows to fill remaining
+        // space. We intentionally don't put overflow:auto on the
+        // first child: that would put a vscroll on the root layout
+        // itself. Instead, the scroll should live on the deepest
+        // appropriate element — TabControl tab panels, ListView
+        // body, .Pre output panel. Opt out per-Page via
+        // Page.NaturalFlow() if you really want the document to
+        // scroll the old way.
+        c = c + "body.amc-fill{height:100vh;overflow:hidden;display:flex;flex-direction:column;gap:8px}"
+        c = c + "body.amc-fill>*{min-height:0}"
+        c = c + "body.amc-fill>*:first-child{flex:1;display:flex;flex-direction:column;min-height:0}"
+        c = c + "body.amc-fill>*:first-child>*{min-height:0}"
+        // Pre / Textarea : the user-facing scroll containers when
+        // they sit inside a fill-viewport layout — they get a
+        // sane max-height so they don't push the page.
+        c = c + "body.amc-fill pre{max-height:200px}"
+        // Children marked with class amc-fill (via .Fill() helper)
+        // take whatever space is left in their flex parent and
+        // scroll internally.
+        c = c + ".amc-fill-child{flex:1;min-height:0;overflow:auto}"
         c = c + "input,select,textarea,pre{-webkit-user-select:text;user-select:text}"
         c = c + "h1,h2,h3{margin:0 0 8px}p{margin:0 0 8px}"
         c = c + "button{padding:6px 12px;border:1px solid var(--amc-border);border-radius:var(--amc-radius);background:var(--amc-surface);color:var(--amc-fg);cursor:pointer;font:inherit}"
@@ -640,7 +1353,89 @@ public class Page {
         c = c + "input,select,textarea{padding:6px 8px;border:1px solid var(--amc-border);border-radius:var(--amc-radius);background:var(--amc-bg);color:var(--amc-fg);font:inherit}"
         c = c + "textarea{resize:none}"
         c = c + "input:focus,select:focus,textarea:focus{outline:2px solid var(--amc-accent);outline-offset:-1px}"
+        // Range slider, checkbox, radio — the generic input rule
+        // wraps them in a thick bordered box that looks awful.
+        // Reset to their native chromeless rendering.
+        c = c + "input[type=range],input[type=checkbox],input[type=radio]{padding:0;border:none;background:transparent;outline:none;width:auto}"
+        c = c + "input[type=range]{width:200px;accent-color:var(--amc-accent)}"
+        c = c + "input[type=checkbox],input[type=radio]{accent-color:var(--amc-accent);width:16px;height:16px}"
+        // <input type=number> hover-jitter fix + composite spinner.
+        // WebKitGTK doesn't render the native ::-webkit-inner-spin-
+        // button at all (Chrome / WebKit-on-macOS do), so we ship
+        // explicit +/− buttons via the Element.Number composite.
+        // Pin the input height so the bare input doesn't jitter
+        // either; hide any residual native spinners on WebKit.
+        c = c + "input[type=number]{height:32px;box-sizing:border-box}"
+        c = c + "input[type=number]::-webkit-inner-spin-button,input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}"
+        // NumericUpDown composite — input + vertically-stacked
+        // up/down buttons on the right, mirroring the native
+        // WinForms look. The wrapper carries the border + height
+        // so the inner input and buttons can stay borderless.
+        c = c + ".amc-numericupdown{display:inline-flex;align-items:stretch;border-radius:var(--amc-radius);overflow:hidden;border:1px solid var(--amc-border);height:32px;background:var(--amc-bg)}"
+        c = c + ".amc-numericupdown>input[type=number]{border:none;border-radius:0;height:auto;flex:1;min-width:60px;padding:0 8px;background:transparent}"
+        c = c + ".amc-numericupdown>input[type=number]:focus{outline:none}"
+        c = c + ".amc-numericupdown:focus-within{outline:2px solid var(--amc-accent);outline-offset:-1px}"
+        c = c + ".amc-numericupdown>.amc-num-spin{display:flex;flex-direction:column;border-left:1px solid var(--amc-border);width:18px}"
+        c = c + ".amc-numericupdown>.amc-num-spin>button.amc-num-btn{flex:1;padding:0;border:none;background:var(--amc-surface);color:var(--amc-fg);cursor:pointer;font-size:8px;line-height:1;border-radius:0;display:flex;align-items:center;justify-content:center}"
+        c = c + ".amc-numericupdown>.amc-num-spin>button.amc-num-up{border-bottom:1px solid var(--amc-border)}"
+        c = c + ".amc-numericupdown>.amc-num-spin>button.amc-num-btn:hover{background:var(--amc-border)}"
+        // v0.0.5 — color picker: the generic input rule shrinks the
+        // native swatch to ~14 px because of padding + var(--amc-bg)
+        // bg. Reset to a sane size so the selected color is actually
+        // visible. Width matches the native pickers on macOS / Windows.
+        c = c + "input[type=color]{padding:2px;min-width:44px;width:44px;min-height:32px;height:32px;background:var(--amc-bg);cursor:pointer}"
+        c = c + "input[type=color]::-webkit-color-swatch{border:1px solid var(--amc-border);border-radius:2px}"
+        c = c + "input[type=color]::-moz-color-swatch{border:1px solid var(--amc-border);border-radius:2px}"
+        // Inline label wrappers for CheckBox / Radio so clicking the
+        // text toggles the input. Used by Element.CheckBoxLabel /
+        // Element.RadioLabel.
+        c = c + "label.amc-radio,label.amc-checkbox{display:inline-flex;align-items:center;gap:6px;cursor:pointer;padding:2px 0}"
+        c = c + "label.amc-radio>input,label.amc-checkbox>input{cursor:pointer;margin:0}"
+        // Anchor links — match the theme rather than browser default
+        // blue, which clashes on dark mode.
+        c = c + "a{color:var(--amc-accent);text-decoration:none}"
+        c = c + "a:hover{text-decoration:underline}"
         c = c + "pre{padding:8px;background:var(--amc-surface);border-radius:var(--amc-radius);overflow:auto;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--amc-fg)}"
+        // v0.0.5 — themed widget rules. All colors via --amc-* so
+        // light/dark flip happens automatically on [data-theme].
+        c = c + "fieldset.amc-groupbox{border:1px solid var(--amc-border);border-radius:var(--amc-radius);padding:8px 12px;margin:0}"
+        c = c + "fieldset.amc-groupbox>legend{color:var(--amc-muted);padding:0 4px;font-size:12px}"
+        c = c + "footer.amc-statusstrip{position:fixed;left:0;right:0;bottom:0;padding:4px 12px;background:var(--amc-surface);border-top:1px solid var(--amc-border);color:var(--amc-muted);font-size:12px;display:flex;gap:12px}"
+        c = c + ".amc-toolstrip{background:var(--amc-surface);border:1px solid var(--amc-border);border-radius:var(--amc-radius)}"
+        c = c + ".amc-toolstrip>button{padding:4px 8px;border:none;background:transparent}"
+        c = c + ".amc-toolstrip>button:hover{background:var(--amc-border)}"
+        c = c + "iframe.amc-iframe{border:1px solid var(--amc-border);border-radius:var(--amc-radius);background:var(--amc-bg);width:100%;min-height:200px}"
+        c = c + "table.amc-listview{border-collapse:collapse;width:100%;font:inherit}"
+        c = c + "table.amc-listview th,table.amc-listview td{border:1px solid var(--amc-border);padding:4px 8px;text-align:left}"
+        c = c + "table.amc-listview thead th{background:var(--amc-surface);color:var(--amc-fg);font-weight:600}"
+        c = c + "table.amc-listview tbody tr:hover{background:var(--amc-surface)}"
+        c = c + "ul.amc-checkedlistbox{list-style:none;margin:0;padding:4px;border:1px solid var(--amc-border);border-radius:var(--amc-radius);max-height:180px;overflow:auto;background:var(--amc-bg)}"
+        c = c + "ul.amc-checkedlistbox>li{padding:2px 4px}"
+        c = c + "ul.amc-checkedlistbox>li:hover{background:var(--amc-surface)}"
+        c = c + "ul.amc-checkedlistbox label{display:flex;align-items:center;gap:6px;cursor:pointer}"
+        // CSS-only tabs — radio + sibling selector. The Tab() builder
+        // emits 3 wrapped triples (radio, label, panel) per tab.
+        // Tabs share their `name`, so checking one unchecks the rest.
+        // Labels float left so they form a row at the top of the
+        // .amc-tabs container; panels stack underneath and only the
+        // one whose radio is :checked is shown.
+        // TabControl — CSS grid: row 1 holds the label strip
+        // (auto-placed across up to 32 columns), row 2 holds the
+        // active panel spanning the full width. The radio + sibling
+        // selector toggles which panel is visible; the panel grows
+        // with flex:1 and scrolls internally so the tab strip stays
+        // pinned at top.
+        c = c + ".amc-tabs{border:1px solid var(--amc-border);border-radius:var(--amc-radius);background:var(--amc-bg);display:grid;grid-template-columns:repeat(32,auto) 1fr;grid-template-rows:auto minmax(0,1fr);flex:1;min-width:0;min-height:0}"
+        c = c + ".amc-tab{display:contents}"
+        c = c + ".amc-tabs>.amc-tab>input[type=radio]{display:none}"
+        c = c + ".amc-tabs>.amc-tab>label.amc-tab-label{grid-row:1;padding:6px 12px;cursor:pointer;border-right:1px solid var(--amc-border);color:var(--amc-muted);background:var(--amc-surface)}"
+        c = c + ".amc-tabs>.amc-tab>input[type=radio]:checked+label.amc-tab-label{background:var(--amc-bg);color:var(--amc-fg);border-bottom:2px solid var(--amc-accent);margin-bottom:-1px;z-index:1}"
+        c = c + ".amc-tabs>.amc-tab>.amc-tab-panel{grid-row:2;grid-column:1/-1;display:none;padding:12px;border-top:1px solid var(--amc-border);min-height:0;overflow:auto}"
+        c = c + ".amc-tabs>.amc-tab>input[type=radio]:checked~.amc-tab-panel{display:flex;flex-direction:column;gap:8px}"
+        // Invalid form fields — paired with MaskedTextBox `pattern`
+        // attribute. The `:invalid` pseudo-class auto-applies once
+        // the user has typed; we don't want it red on first paint.
+        c = c + "input:not(:placeholder-shown):invalid{border-color:#c0392b}"
         return c
     }
 
@@ -669,10 +1464,53 @@ public class Page {
         for i in 0..nx {
             html = html + "<link rel=\"stylesheet\" href=\"" + Html.Escape(this.ExtraCss.Get(i)) + "\">"
         }
-        html = html + "</head><body>"
+        var bodyTag: string = "<body>"
+        if (this.FillFlag) {
+            bodyTag = "<body class=\"amc-fill\">"
+        }
+        html = html + "</head>" + bodyTag
         html = html + this.RenderElement(this.Body)
         html = html + "</body></html>"
         return html
+    }
+
+    // ── Partial updates (v0.0.5) ──────────────────────────
+    //
+    // PatchInner replaces the inner HTML of `#targetId` with a
+    // freshly-rendered subtree, accumulating its event bindings
+    // into the page's bind table and re-registering them on the
+    // window. Use to refresh a single DataGrid row, swap a tab
+    // panel body, or any other partial update — much cheaper than
+    // re-applying the whole Page.
+    //
+    //   page.PatchInner(win, "grid-body", newRowsContainer)
+    //
+    // The counter is intentionally NOT reset, so handler names
+    // stay unique across calls. The element passed in does NOT
+    // include `#targetId` itself — only its children replace the
+    // existing inner HTML.
+    public void PatchInner(win: Window, targetId: string, element: Element) {
+        let before: int = this.BindNames.Count()
+        let html: string = this.RenderElement(element)
+        let after: int = this.BindNames.Count()
+        for i in before..after {
+            win.Bind(this.BindNames.Get(i), this.BindHandlers.Get(i))
+        }
+        win.SetInnerHtml(targetId, html)
+    }
+
+    // AppendInner adds the rendered element as a new last child of
+    // `#targetId` instead of replacing the existing children. Same
+    // binding contract as PatchInner — typical use is appending a
+    // new row to a ListView body.
+    public void AppendInner(win: Window, targetId: string, element: Element) {
+        let before: int = this.BindNames.Count()
+        let html: string = this.RenderElement(element)
+        let after: int = this.BindNames.Count()
+        for i in before..after {
+            win.Bind(this.BindNames.Get(i), this.BindHandlers.Get(i))
+        }
+        win.AppendHtml(targetId, html)
     }
 
     // HTML void elements — no closing tag, no children. Browsers
@@ -689,6 +1527,11 @@ public class Page {
 
     // Walk one element. Recursive — children render inside.
     public string RenderElement(e: Element) {
+        // Pseudo-tag for Element.Raw(html) — emit the raw payload
+        // verbatim, no `<tag>` wrapping. See Element.Raw().
+        if (e.Tag == "__raw__") {
+            return e.Text
+        }
         var s: string = "<" + e.Tag
         let nk: int = e.AttrKeys.Count()
         for i in 0..nk {
@@ -699,15 +1542,30 @@ public class Page {
         if (String_Length(e.StyleCss) > 0) {
             s = s + " style=\"" + Html.Escape(e.StyleCss) + "\""
         }
-        if (e.HasClick) {
+        // Event emission — one HTML `on<event>=` attribute per row in
+        // the Element's event table. Each handler is bound under a
+        // fresh `_amc_<n>` name via Window.Bind. Result routing
+        // falls back from the per-event captured target to the
+        // Element's default ResultTargetId, so both
+        // `.OnResult(x).OnClick(h)` and `.OnClick(h).OnResult(x)`
+        // work as expected.
+        let ne: int = e.Events.Count()
+        for i in 0..ne {
             this.Counter = this.Counter + 1
             let bname: string = "_amc_" + String_FromInt(this.Counter)
             this.BindNames.Add(bname)
-            this.BindHandlers.Add(e.ClickFn)
-            // Pass JSON-stringified form state to every handler so
-            // the AM side reads inputs declaratively — see the
-            // window.__amc_collect bridge injected by ApplyTo.
-            s = s + " onclick=\"window." + bname + "(JSON.stringify(window.__amc_collect()))\""
+            this.BindHandlers.Add(e.EventHandlers.Get(i))
+            let call: string = "window." + bname + "(JSON.stringify(window.__amc_collect()))"
+            var target: string = e.EventResults.Get(i)
+            if (String_Length(target) == 0) {
+                target = e.ResultTargetId
+            }
+            var expr: string = call
+            if (String_Length(target) > 0) {
+                let idLit: string = Html.Escape(Json.EncodeString(target))
+                expr = "window.__amc_route(" + call + "," + idLit + ")"
+            }
+            s = s + " on" + e.Events.Get(i) + "=\"" + expr + "\""
         }
         s = s + ">"
         if (Page.IsVoidTag(e.Tag)) {
@@ -747,6 +1605,21 @@ public class Page {
     //     reason.
     public void ApplyTo(win: Window) {
         var initJs: string = "window.__amc_collect=function(){var o={};document.querySelectorAll('input[name],select[name],textarea[name]').forEach(function(el){var n=el.getAttribute('name');if(el.type==='checkbox'){o[n]=el.checked;}else if(el.type==='radio'){if(el.checked){o[n]=el.value;}}else{o[n]=el.value;}});return o;};"
+        // Result router for Element.OnResult(targetId). Awaits the
+        // bound handler's promise, then writes the return value into
+        // the target element. We pretty-print valid JSON for
+        // readability and fall through to the raw string for plain-
+        // text returns — so handlers that return `Json.EncodeString`
+        // wrappers AND handlers that return free-form strings both
+        // render usefully. The lookup is intentionally late-bound
+        // (querySelector at click time, not render time) so targets
+        // injected after Render still resolve.
+        initJs = initJs + "window.__amc_route=function(p,id){Promise.resolve(p).then(function(r){var el=document.getElementById(id);if(!el)return;try{el.textContent=JSON.stringify(JSON.parse(r),null,2);}catch(e){el.textContent=r;}});};"
+        // External link routing happens via the inline `onclick`
+        // attribute emitted by Element.Link — direct, no global
+        // event delegate (so no race with the webview's native
+        // navigation handler, and no risk of double-firing when an
+        // <a> already carries its own onclick).
         if (this.LockChrome) {
             initJs = initJs + "document.addEventListener('contextmenu',function(e){e.preventDefault();},true);"
             initJs = initJs + "document.addEventListener('keydown',function(e){var k=e.key;var m=e.ctrlKey||e.metaKey;if(k==='F5'){e.preventDefault();return;}if(m&&(k==='r'||k==='R')){e.preventDefault();return;}},true);"
@@ -754,6 +1627,43 @@ public class Page {
         win.Init(initJs)
         let html: string = this.Render()
         win.SetHtml(html)
+        // Bind the link-opener handler. The closure parses the JSON-
+        // stringified URL and forwards it to the C launcher. Defined
+        // even if the page contains no <a> elements — cheap and lets
+        // dynamically-injected links work too.
+        //
+        // We call the C primitive directly inside the lambda rather
+        // than going through Page.OpenExternalUrl — amc's current
+        // codegen for static-method calls inside a closure threads
+        // the class name as a phantom `self` arg, causing a C
+        // compile error. The `@c` block sidesteps that.
+        win.Bind("_amc_openurl", (req: string) => {
+            // webview/webview wraps every bind callback's argv as
+            // a JSON array: e.g. `window.foo("a","b")` arrives as
+            // `["a","b"]`. So `req` is `["url"]`, NOT just `url`.
+            // We strip the brackets, then the inner string's quotes,
+            // then un-escape the standard JSON sequences.
+            var s: string = req
+            let n0: int = String_Length(s)
+            if (n0 >= 2 && String_StartsWith(s, "[")) {
+                s = String_Substring(s, 1, n0 - 2)
+            }
+            let n1: int = String_Length(s)
+            if (n1 >= 2 && String_StartsWith(s, "\"")) {
+                s = String_Substring(s, 1, n1 - 2)
+            }
+            s = String_Replace(s, "\\/",  "/")
+            s = String_Replace(s, "\\\"", "\"")
+            s = String_Replace(s, "\\\\", "\\")
+            Console.WriteLine("[ui-web] _amc_openurl -> " + s)
+            var rc: int = 1
+            @c {
+                rc = (i64)Amalgame_UI_Web_OpenUrl(s);
+            }
+            Console.WriteLine("[ui-web] OpenUrl rc=" + String_FromInt(rc))
+            if (rc == 0) { return "true" }
+            return "false"
+        })
         let n: int = this.BindNames.Count()
         for i in 0..n {
             win.Bind(this.BindNames.Get(i), this.BindHandlers.Get(i))

@@ -21,6 +21,10 @@
 
 #ifdef _WIN32
 #include <windows.h>
+#include <shellapi.h>
+#else
+#include <unistd.h>
+#include <sys/wait.h>
 #endif
 
 /* On Linux/BSD we want to flip the host GTK app to dark mode when the
@@ -307,5 +311,43 @@ const char* Amalgame_UI_Web_DetectOSTheme(void) {
     if (gtk && strstr(gtk, ":dark")) return "dark";
     /* Older GNOME / KDE / minimal WMs — default to light. */
     return "light";
+#endif
+}
+
+/* v0.0.5 — open an external URL in the OS default browser.
+ *
+ * The scheme check is the only sanity gate we want — once we've
+ * established the URL is one of http://, https://, file://, we
+ * pass it as a single argv element to the platform launcher
+ * (execvp on Unix, ShellExecuteA on Windows). No shell, so no
+ * quoting / metacharacter concerns.
+ *
+ * Returns 0 on success, non-zero on bad scheme / launcher failure. */
+int Amalgame_UI_Web_OpenUrl(const char* url) {
+    if (!url) return 1;
+    if (strncmp(url, "http://",  7) != 0 &&
+        strncmp(url, "https://", 8) != 0 &&
+        strncmp(url, "file://",  7) != 0) {
+        return 2;  /* unsupported scheme — don't leak to a launcher */
+    }
+#if defined(_WIN32)
+    HINSTANCE r = ShellExecuteA(NULL, "open", url, NULL, NULL, SW_SHOWNORMAL);
+    return ((INT_PTR)r > 32) ? 0 : 3;
+#elif defined(__APPLE__)
+    pid_t pid = fork();
+    if (pid < 0) return 4;
+    if (pid == 0) {
+        execlp("open", "open", url, (char*)NULL);
+        _exit(127);  /* execlp failed — child exits, parent unaffected */
+    }
+    return 0;
+#else
+    pid_t pid = fork();
+    if (pid < 0) return 4;
+    if (pid == 0) {
+        execlp("xdg-open", "xdg-open", url, (char*)NULL);
+        _exit(127);
+    }
+    return 0;
 #endif
 }
