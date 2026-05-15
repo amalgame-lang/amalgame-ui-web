@@ -1560,16 +1560,19 @@ public class Page {
         // the class name as a phantom `self` arg, causing a C
         // compile error. The `@c` block sidesteps that.
         win.Bind("_amc_openurl", (req: string) => {
+            Console.WriteLine("[ui-web] _amc_openurl called: " + req)
             var url: string = req
             // Strip surrounding double quotes from JSON.stringify.
             let n: int = String_Length(url)
             if (n >= 2 && String_StartsWith(url, "\"")) {
                 url = String_Substring(url, 1, n - 2)
             }
+            Console.WriteLine("[ui-web] launching url: " + url)
             var rc: int = 1
             @c {
                 rc = (i64)Amalgame_UI_Web_OpenUrl(url);
             }
+            Console.WriteLine("[ui-web] OpenUrl rc=" + String_FromInt(rc))
             if (rc == 0) { return "true" }
             return "false"
         })

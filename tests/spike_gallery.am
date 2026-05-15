@@ -138,7 +138,8 @@ class Program {
                     .AddChild(Element.ListViewRow(row2))
                     .AddChild(Element.ListViewRow(row3)))
                 .AddChild(Element.Row()
-                    .AddChild(Element.Button("Add row").Id("add-row-btn"))
+                    .AddChild(Element.Button("Add row")
+                        .Attr("onclick", "window.amc_addrow('');"))
                     .AddChild(Element.Label("→  appends a new row via Page.AppendInner — no full re-render"))))
             .AddChild(Element.GroupBox("LinkLabel + PictureBox")
                 .AddChild(Element.Row()
@@ -183,16 +184,19 @@ class Program {
                         .AddChild(Element.Label("OS-themed (light/dark auto)")))
             )
 
-        page.ApplyTo(win)
-
-        // Wire the "Add row" button AFTER ApplyTo so we can use
-        // Page.AppendInner — it captures `page` and `win` from the
-        // closure. Each click appends a fresh row to the ListView
-        // body, demonstrating partial-DOM patching without
-        // re-rendering anything else on the page.
+        // Bind the "Add row" handler BEFORE ApplyTo so the binding
+        // is in the win's bind table when the page loads — webview
+        // injects the shim during page load. The button itself
+        // carries an onclick attribute calling window.amc_addrow,
+        // so no Eval / DOMContentLoaded race involved.
+        //
+        // Each click captures the closure over `page` and `win`,
+        // builds a fresh row, and Page.AppendInner injects it into
+        // the ListView body without re-rendering the rest.
         var addCount: int = 0
         win.Bind("amc_addrow", (req: string) => {
             addCount = addCount + 1
+            Console.WriteLine("[gallery] amc_addrow #" + String_FromInt(addCount))
             let r: List<string> = [
                 "new-" + String_FromInt(addCount) + ".txt",
                 "0 KB",
@@ -201,8 +205,8 @@ class Program {
             page.AppendInner(win, "files-body", Element.ListViewRow(r))
             return "true"
         })
-        win.Eval("var b=document.getElementById('add-row-btn');if(b)b.onclick=function(){window.amc_addrow('');};")
 
+        page.ApplyTo(win)
         win.Run()
         win.Destroy()
     }
