@@ -48,11 +48,16 @@ fi
 echo "Using $WEBKIT_PC ($(pkg-config --modversion "$WEBKIT_PC"))"
 
 # --- 1. webview C++ implementation TU ---------------------------------
+# Define WEBVIEW_STATIC so WEBVIEW_API expands to plain `extern` (not
+# `inline`). Without it the C++ compiler emits the functions as inline,
+# no symbols land in the .o, and the final link fails on
+# `undefined reference to webview_create` (etc).
 if [ ! -f runtime/vendor/webview/webview.o ] || \
    [ runtime/vendor/webview/webview.h -nt runtime/vendor/webview/webview.o ] || \
    [ runtime/vendor/webview/webview.cc -nt runtime/vendor/webview/webview.o ]; then
     echo "Building webview C++ impl…"
-    g++ -c -O2 -std=c++14 \
+    g++ -c -O2 -std=c++17 -DNDEBUG -Wno-unused-parameter \
+        -DWEBVIEW_STATIC \
         -I runtime/vendor/webview \
         $(pkg-config --cflags "$WEBKIT_PC") \
         runtime/vendor/webview/webview.cc \
@@ -60,11 +65,13 @@ if [ ! -f runtime/vendor/webview/webview.o ] || \
 fi
 
 # --- 2. C glue TU ------------------------------------------------------
+# Same WEBVIEW_STATIC requirement — keeps the C-side declarations in
+# sync with the C++ TU's symbol visibility.
 if [ ! -f runtime/Amalgame_UI_Web.o ] || \
    [ runtime/Amalgame_UI_Web.h -nt runtime/Amalgame_UI_Web.o ] || \
    [ runtime/Amalgame_UI_Web.c -nt runtime/Amalgame_UI_Web.o ]; then
     echo "Building C glue layer…"
-    gcc -c -O2 \
+    gcc -c -O2 -DWEBVIEW_STATIC \
         -I runtime \
         -I runtime/vendor/webview \
         -I "$AMC_DIR/runtime" \
