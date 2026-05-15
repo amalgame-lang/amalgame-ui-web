@@ -1,0 +1,43 @@
+import Amalgame.UI.Web
+
+// Spike for amalgame-ui-web v0.0.2 — JS ↔ Amalgame IPC via Bind.
+// A button in the webview calls window.greet("amalgame"); the
+// Amalgame handler echoes back a JSON-encoded string that gets
+// rendered in the DOM.
+//
+// Build (same flow as tests/spike.am, see tests/build_spike.sh).
+//
+// Expected:
+//   - native window opens
+//   - clicking "Greet" prints `"AM received: [\"amalgame\"]"` (the
+//     full JSON-encoded JS argument list) in the <pre> element
+
+class Program {
+    public static void Main() {
+        let win: Window = new Window("Amalgame.UI.Web — Bind demo", 700, 480, true)
+        if (!win.IsValid()) {
+            return
+        }
+
+        // Typed-param lambda: amc emits a pointer cast for `req`
+        // (since v0.8.11 multi-param lambda parser accepts `:type`).
+        //
+        // The handler MUST return valid JSON — webview_return parses
+        // the result on the JS side. Returning `req` raw is fine
+        // because `req` is already JSON (the encoded args array).
+        // For free-form strings, wrap with explicit quotes AND escape
+        // any embedded quotes — use Amalgame.Formats.Json when the
+        // payload contains user content. Examples:
+        //   - echo:        `req => req`                   → `["amalgame"]`
+        //   - fixed str:   `req => "\"hello\""`           → `"hello"` (string)
+        //   - number:      `req => "42"`                  → `42`
+        //   - object:      `req => "{\"ok\":true}"`       → `{ ok: true }`
+        win.Bind("greet", (req: string) => req)
+
+        let html: string = "<h1>v0.0.2 Bind demo</h1><p>Click to echo args back via Amalgame.</p><button onclick='go()'>Greet</button><pre id=out></pre><script>async function go(){const r=await window.greet('amalgame','from-js');document.getElementById('out').textContent='AM round-trip: '+JSON.stringify(r);}</script>"
+
+        win.SetHtml(html)
+        win.Run()
+        win.Destroy()
+    }
+}
