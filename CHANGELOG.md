@@ -2,7 +2,113 @@
 
 All notable changes to `amalgame-ui-web` are recorded here.
 
-## [Unreleased] — v0.0.7-dev
+## [Unreleased] — v0.0.8-dev
+
+### Added — `MenuBar` (HTML/CSS, common cross-OS)
+
+App-level horizontal menu strip, same shape as WinForms'
+`MenuStrip`. HTML/CSS-only — renders pixel-identical on every
+OS through the `--amc-*` theme variables. The OS-native variant
+(Win32 / NSMenu / GtkMenuBar) is planned as opt-in in v0.1.0;
+the common path here is what VS Code Desktop / Slack / Discord
+ship with.
+
+```amalgame
+Element.MenuBar()
+    .AddChild(Element.MenuItem("File")
+        .AddChild(Element.MenuOption("New",   "amc_new"))
+        .AddChild(Element.MenuOption("Open…", "amc_open"))
+        .AddChild(Element.MenuSeparator())
+        .AddChild(Element.MenuOption("Quit",  "amc_quit")))
+    .AddChild(Element.MenuItem("Edit")
+        .AddChild(Element.MenuOption("Undo",  "amc_undo")))
+```
+
+Four builders: `MenuBar()` (the `<nav>` container), `MenuItem(label)`
+(label + dropdown panel — internally a `<details>` whose
+`<summary>` is the label and children form the popup),
+`MenuOption(label, actionName)` (a `<button>` inside the popup
+that calls `window.<actionName>('')` on click), and
+`MenuSeparator()` (themed `<hr>`).
+
+Bridge wiring: a global `click` listener closes any open menu
+when the user clicks outside it; `Escape` closes every open
+menu and any visible context menu.
+
+### Added — `Element.ContextMenu` (right-click menu)
+
+```amalgame
+let cm = Element.ContextMenu("workspace")
+    .AddChild(Element.MenuOption("Cut",   "amc_cut"))
+    .AddChild(Element.MenuOption("Copy",  "amc_copy"))
+    .AddChild(Element.MenuSeparator())
+    .AddChild(Element.MenuOption("Paste", "amc_paste"))
+
+Element.Div().Id("workspace").Class("amc-ctx-target")
+    .AddChild(cm)
+    .AddChild( … your actual content … )
+```
+
+The bridge listens for `contextmenu` events on `.amc-ctx-target`
+ancestors, calls `e.preventDefault()`, and positions the menu
+at the cursor via `position:fixed`. Click outside / Escape hides
+it. Reuses `MenuOption` / `MenuSeparator` so the look and bind
+shape match the MenuBar.
+
+### Added — `Element.SplitContainer`
+
+Two-pane resizable container — equivalent to WinForms'
+`SplitContainer`. `orientation` is `"row"` (left/right with a
+vertical divider) or `"column"` (top/bottom). `initialRatio` is
+the first pane's percentage 5..95 (e.g. `30` → 30/70 split).
+
+```amalgame
+Element.SplitContainer("row", 30)
+    .AddChild(Element.Stack().AddChild(Element.TreeView()…))  // left
+    .AddChild(Element.Stack().AddChild(…))                     // right
+```
+
+Pure HTML/CSS structure (`<div class=amc-split>` with two pane
+divs and a divider) plus a small JS bridge that handles the
+pointer drag — `pointerdown` on `.amc-split-divider` →
+`pointermove` adjusts the panes' flex grow values → `pointerup`
+ends the drag. Min ratio is clamped 5..95 to avoid one pane
+collapsing entirely.
+
+### Added — `Dialog.OpenFileContent` (FileReader)
+
+Same UX as `Dialog.OpenFile` but the handler receives the file's
+contents alongside the name as a JSON object string:
+
+```amalgame
+Dialog.OpenFileContent(win, ".txt,.json", false, (payload: string) => {
+    // payload = "" on cancel, otherwise:
+    // {"name":"notes.txt","content":"Hello, file…"}
+    …
+})
+```
+
+`accept` is the input filter (extensions or MIME types). The
+`binary` boolean switches the reader between `readAsText`
+(strings) and `readAsDataURL` with the prefix stripped
+(base64-encoded payload — decode with `String_FromBase64` or
+similar in your handler).
+
+### spike_v008
+
+A standalone spike (`tests/spike_v008.am`) lays out a full
+IDE-shell demo:
+- top `MenuBar` (File / Edit / View)
+- middle `SplitContainer` 30/70 (TreeView left, editor right)
+- right pane wrapped in a `ContextMenu` for right-click
+- File > Open uses `OpenFileContent` to load a file into the
+  status label
+- File > Save uses `SaveFile` to dump a sample text
+- bottom `StatusStrip`
+
+Run: `bash tests/build_spike.sh spike_v008 && ./build/spike_v008`.
+
+## [v0.0.7] — 2026-05-16
 
 ### Added — `Form` + `Application.Run`
 
