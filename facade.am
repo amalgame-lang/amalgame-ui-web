@@ -2203,11 +2203,20 @@ public class Page {
             initJs = initJs + "document.addEventListener('contextmenu',function(e){e.preventDefault();},true);"
             initJs = initJs + "document.addEventListener('keydown',function(e){var k=e.key;var m=e.ctrlKey||e.metaKey;if(k==='F5'){e.preventDefault();return;}if(m&&(k==='r'||k==='R')){e.preventDefault();return;}},true);"
         }
-        // v0.0.9 — AutoTheme: listen to OS prefers-color-scheme
+        // v0.0.8 — AutoTheme: listen to OS prefers-color-scheme
         // and flip <html data-theme> live. Also calls _amc_theme
         // when an AM-side OnThemeChange handler is bound.
+        //
+        // Two paths run in parallel:
+        // 1. matchMedia change event — instant, works on WebView2
+        //    + WKWebView + modern WebKitGTK.
+        // 2. C-side polling fallback every 1.5s via _amc_get_theme
+        //    — covers WebKitGTK builds that don't propagate the
+        //    GNOME / KDE color scheme to the embedded page.
+        // Both paths converge on the same data-theme attribute and
+        // call _amc_theme only when the value actually changes.
         if (this.AutoThemeFlag) {
-            initJs = initJs + "(function(){if(!window.matchMedia)return;var mq=window.matchMedia('(prefers-color-scheme: dark)');function apply(){var m=mq.matches?'dark':'light';document.documentElement.setAttribute('data-theme',m);if(window._amc_theme)window._amc_theme(m);}apply();if(mq.addEventListener)mq.addEventListener('change',apply);else if(mq.addListener)mq.addListener(apply);})();"
+            initJs = initJs + "(function(){var last='';function set(m){if(m===last)return;last=m;document.documentElement.setAttribute('data-theme',m);if(window._amc_theme)window._amc_theme(m);}if(window.matchMedia){var mq=window.matchMedia('(prefers-color-scheme: dark)');set(mq.matches?'dark':'light');if(mq.addEventListener)mq.addEventListener('change',function(){set(mq.matches?'dark':'light');});else if(mq.addListener)mq.addListener(function(){set(mq.matches?'dark':'light');});}setInterval(function(){if(!window._amc_get_theme)return;window._amc_get_theme('').then(function(r){var t=String(r||'').replace(/^\"+|\"+$/g,'');if(t==='dark'||t==='light')set(t);});},1500);})();"
         }
         win.Init(initJs)
         let html: string = this.Render()
@@ -2224,10 +2233,26 @@ public class Page {
         // compile error. The `@c` block sidesteps that.
         // AutoTheme handler — if the user attached an
         // OnThemeChange callback, bind it now so the live
-        // matchMedia listener can dispatch to AM. The handler
-        // receives "dark" or "light" as the `req` JSON string.
+        // matchMedia / polling listener can dispatch to AM.
+        // The handler receives "dark" or "light" as the `req`
+        // JSON string.
         if (this.HasThemeChange) {
             win.Bind("_amc_theme", this.ThemeChangeFn)
+        }
+        // AutoTheme polling fallback — bind _amc_get_theme that
+        // reads the current OS preference via the C primitive.
+        // The JS-side setInterval polls this every 1.5s so engines
+        // that don't fire matchMedia change events (older
+        // WebKitGTK) still get the live flip.
+        if (this.AutoThemeFlag) {
+            win.Bind("_amc_get_theme", (req: string) => {
+                var t: string = "light"
+                @c {
+                    const char* p = Amalgame_UI_Web_DetectOSTheme();
+                    t = (code_string)(p ? p : "light");
+                }
+                return "\"" + t + "\""
+            })
         }
         win.Bind("_amc_openurl", (req: string) => {
             // webview/webview wraps every bind callback's argv as
