@@ -2,7 +2,105 @@
 
 All notable changes to `amalgame-ui-web` are recorded here.
 
-## [Unreleased] — v0.0.8-dev
+## [Unreleased] — v0.0.9-dev
+
+### Added — `Element.RichTextBox(name)`
+
+Editable multi-line area that accepts inline formatting — the
+WinForms `RichTextBox` equivalent. Rendered as a `<div
+contenteditable="true">` so the user can paste rich content from
+another app and use the browser's built-in shortcuts
+(`Ctrl-B` / `Ctrl-I` / `Ctrl-U`) for inline formatting.
+
+```amalgame
+Element.RichTextBox("notes")
+    .Attr("placeholder-text", "Write notes here…")
+    .Style("min-height:120px")
+```
+
+The form payload reports the rich-text content as the inner HTML
+under the `name` key. `__amc_collect` was extended to walk
+`[contenteditable][name]` elements alongside the regular form
+fields.
+
+A built-in toolbar (Bold / Italic / Underline / Heading buttons)
+is a v0.0.10 candidate; for now, attach a custom toolbar via
+`Window.Eval` if you need one.
+
+### Added — `Element.MonthCalendar(name, year, month)`
+
+Inline month grid — the WinForms `MonthCalendar` equivalent. The
+HTML markup is computed at page load by a small bridge JS that
+runs from `Page.ApplyTo`; the AM side just declares the widget
+with a form `name` and an initial `(year, month)`.
+
+```amalgame
+Element.MonthCalendar("birthday", 2026, 5)
+```
+
+Clicking a day highlights it; the form payload reports the
+selection as an ISO date `YYYY-MM-DD` under `name`. Today's
+date is auto-outlined with the accent color.
+
+No navigation buttons in v0.0.9 — re-render via `Page.PatchInner`
+with a different `(year, month)` to switch the displayed month.
+A built-in ◀/▶ navigator is a v0.0.10 candidate.
+
+### Added — Component pattern (documentation)
+
+Recommended pattern for reusable widgets is a regular Amalgame
+class with a `Render(): Element` method:
+
+```amalgame
+public class LabeledInput {
+    public Caption: string
+    public Name:    string
+
+    public LabeledInput(caption: string, name: string) {
+        this.Caption = caption
+        this.Name    = name
+    }
+
+    public Element Render() {
+        return Element.Row()
+            .AddChild(Element.Label(this.Caption).Size(120, 0))
+            .AddChild(Element.Input(this.Name))
+    }
+}
+
+// usage
+let first: LabeledInput = new LabeledInput("First name:", "first")
+form.AddChild(first.Render())
+```
+
+No abstract base / interface — Amalgame's static dispatch makes
+virtual overrides on a parent unreliable, so the convention
+keeps things flat and predictable. Ship reusable widgets as a
+regular Amalgame package; consumers pull them via
+`amc package add my-team-widgets` and instantiate them like any
+class.
+
+amc bug-of-the-day: `new LabeledInput(...).Render()` chained in
+one expression doesn't lower correctly today — split via a
+`let` intermediate. Tracked separately.
+
+### Changed — `__amc_collect`
+
+The form-state bridge now also collects from `contenteditable[name]`
+(reports `.innerHTML`) and `.amc-monthcal[name]` (reports the
+ISO date built from `data-year` + `data-month` +
+`data-selected`). Existing collectors for `input` / `select` /
+`textarea` are unchanged.
+
+### spike_v009
+
+A standalone `tests/spike_v009.am` exercises the two new widgets
+and the Component pattern (LabeledInput class with three
+instances). Click "Submit" to see all four form keys
+(`notes` rich text, `birthday` ISO date, `first`/`last`/`email`
+component-filled) come through as a JSON object.
+
+## [v0.0.8] — 2026-05-16
 
 ### Added — `MenuBar` (HTML/CSS, common cross-OS)
 

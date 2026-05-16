@@ -35,7 +35,7 @@
 
 [package]
 name              = "amalgame-ui-web"
-version           = "0.0.8-dev"
+version           = "0.0.9-dev"
 license           = "Apache-2.0"
 description       = "Webview-based GUI — HTML/CSS frontends rendered by the OS webview engine (WebView2 / WKWebView / WebKitGTK)"
 authors           = ["Bastien Mouget"]
