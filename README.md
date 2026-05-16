@@ -44,7 +44,18 @@ for the per-release detail.
 | WinForms-aligned widget palette             | ✓ v0.0.5 |
 | Reactive change handler (`OnChange`)        | ✓ v0.0.5 |
 | Layout sugar (`Grid` / `Position`)          | ✓ v0.0.5 |
-| Native menubar / dialogs / tray             | ✗ — v0.1+ |
+| Modal dialogs (`Dialog.Info / Confirm / …`) | ✓ v0.0.6 |
+| `Form` + `Application.Run` entry point      | ✓ v0.0.7 |
+| File pickers (`Dialog.OpenFile / SaveFile`) | ✓ v0.0.7 |
+| `TreeView` builder                          | ✓ v0.0.7 |
+| `MenuBar` + `ContextMenu` (cross-OS)        | ✓ v0.0.8 |
+| `SplitContainer` (draggable divider)        | ✓ v0.0.8 |
+| `Page.FullBleed()` + `AutoTheme` (live OS)  | ✓ v0.0.8 |
+| `Dialog.OpenFileContent` (FileReader)       | ✓ v0.0.8 |
+| `RichTextBox` (contenteditable)             | ✓ v0.0.9 |
+| `MonthCalendar` (with ◀/▶ navigator v0.0.10)| ✓ v0.0.9–v0.0.10 |
+| Component pattern (reusable widgets)        | ✓ v0.0.9 |
+| **Native** menubar / DataGridView / tray    | ✗ — v0.1+ (opt-in `data-mode="native"`) |
 | Multi-window (>1 simultaneous)              | Up to 4 slots, single-window recommended |
 | Custom URL scheme (`am://`)                 | ✗ — v0.1+ |
 
@@ -122,9 +133,19 @@ Or load a local file:
 w.Navigate("file:///" + Cwd() + "/ui/index.html")
 ```
 
-Smoke tests live in [`tests/`](tests/) — `spike.am` (window MVP),
-`spike_bind.am` (IPC), `spike_builder.am` (Element/Page),
-`spike_form.am` (form reading).
+Smoke tests live in [`tests/`](tests/):
+
+- `spike.am` (window MVP), `spike_bind.am` (IPC),
+  `spike_builder.am` (Element/Page), `spike_form.am` (form reading)
+- `spike_gallery.am` — 8-tab rollup showcasing every widget
+  shipped between v0.0.5 and v0.0.10
+- `spike_app_form.am` — `Form` + `Application.Run` shape (v0.0.7)
+- `spike_v008.am` — IDE-shell demo (MenuBar + SplitContainer +
+  ContextMenu + `OpenFileContent`)
+- `spike_v009.am` — `RichTextBox` + `MonthCalendar` + Component
+  pattern
+
+Build a spike via `bash tests/build_spike.sh <name> && ./build/<name>`.
 
 ## API surface
 
@@ -187,6 +208,60 @@ class Element {
     // Display
     static Element ProgressBar(value, max)        // v0.0.5
     static Element Image(src)                     // v0.0.5
+    static Element PictureBox(src)                // v0.0.5 — alias
+    static Element Iframe(url)                    // v0.0.5
+    static Element MaskedTextBox(name, pat, im)   // v0.0.5
+    static Element CheckedListBox(name)           // v0.0.5
+    static Element CheckedItem(name, value, lbl)  // v0.0.5
+    static Element ListView(headers, bodyId)      // v0.0.5
+    static Element ListViewRow(values)            // v0.0.5
+    static Element GroupBox(title)                // v0.0.5
+    static Element Flow(direction)                // v0.0.5
+    static Element TabControl(group)              // v0.0.5
+    static Element Tab(group, id, label, body)    // v0.0.5
+    static Element ToolStrip()                    // v0.0.5
+    static Element StatusStrip()                  // v0.0.5
+
+    // Trees (v0.0.7)
+    static Element TreeView()
+    static Element TreeNode(caption)
+    static Element TreeLeaf(caption)
+
+    // Menus (v0.0.8)
+    static Element MenuBar()
+    static Element MenuItem(label)
+    static Element MenuOption(label, actionName)
+    static Element MenuSeparator()
+    static Element ContextMenu(targetId)
+
+    // Split + Rich (v0.0.8 / v0.0.9)
+    static Element SplitContainer(orient, ratio)  // v0.0.8
+    static Element RichTextBox(name)              // v0.0.9
+    static Element MonthCalendar(name, year, m)   // v0.0.9 (+ v0.0.10 navigator)
+}
+
+class Dialog {                                    // v0.0.6
+    static void Info(win, title, msg, h)
+    static void Warning(win, title, msg, h)
+    static void Error(win, title, msg, h)
+    static void Confirm(win, title, msg, h)
+    static void YesNoCancel(win, title, msg, h)
+    static void Show(win, kind, title, msg, btns, h)
+    static void OpenFile(win, accept, h)          // v0.0.7
+    static void OpenFileContent(win, accept, bin, h) // v0.0.8
+    static void SaveFile(win, name, content, mime, h) // v0.0.7
+}
+
+class Form {                                      // v0.0.7
+    Form(title: string, w: int, h: int)
+    Form SetBody(body: Element)
+    Form SetTheme(mode: string)
+    Form SetDebug(b: bool)
+    Form OnLoad(handler: Closure)
+}
+
+class Application {                               // v0.0.7
+    static void Run(f: Form)
 }
 
 class Page {
@@ -197,6 +272,13 @@ class Page {
     Page NoBaseline()                             // v0.0.4 — disable baseline
     Page SetTheme(mode: string)                   // v0.0.4 — "auto" | "light" | "dark"
     string EffectiveTheme()                       // v0.0.4 — resolved "light" or "dark"
+    Page FillViewport()                           // v0.0.5 — 100vh + flex root (default)
+    Page NaturalFlow()                            // v0.0.5 — opt out of FillViewport
+    Page FullBleed()                              // v0.0.8 — body padding:0
+    Page AutoTheme(b: bool)                       // v0.0.8 — live OS theme follow
+    Page OnThemeChange(handler: Closure)          // v0.0.8 — implies AutoTheme
+    void PatchInner(win: Window, id: string, e: Element)
+    void AppendInner(win: Window, id: string, e: Element)
     string Render()
     void   ApplyTo(win: Window)
     static string BaselineCss()                   // v0.0.4 — exposed for inspection
@@ -204,10 +286,11 @@ class Page {
 }
 ```
 
-The API is designed forward-compatible with v0.1+ additions —
-existing app code will *not* break when native menus, dialogs,
-tray, multi-window, custom URL schemes, and typed IPC land. See
-the proposal in the main Amalgame repo for the full v1 surface.
+The API is forward-compatible with v0.1+ additions — existing app
+code will *not* break when the opt-in native MenuBar
+(`data-mode="native"`), system tray, multi-window expansion,
+custom URL schemes and typed IPC land. See the proposal in the
+main Amalgame repo for the full v1 surface.
 
 ## Theming (v0.0.4)
 

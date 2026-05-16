@@ -13,15 +13,18 @@ which inventories the widget catalogue.
 ┌──────────────────────────────────────────────────────────────┐
 │ LEVEL 3 — Form                                                │
 │ Top-level window holder. Drives Window + Page underneath.     │
-│ Lifecycle (OnLoad / OnClosing), menubar, layout root.         │
-│ Equivalent: WinForms `Form`. Status: 🟡 v0.0.6.               │
+│ Lifecycle (OnLoad), title / size / theme / debug, body root.  │
+│ Equivalent: WinForms `Form`. Status: ✅ shipped v0.0.7.        │
 └─────────────────────────┬────────────────────────────────────┘
                           │ contains
 ┌─────────────────────────▼────────────────────────────────────┐
 │ LEVEL 2 — Component  (composite, custom widget)               │
-│ abstract class Component { Element Render() }                 │
-│ Encapsulates state + rendering for re-usable widgets a dev    │
-│ ships in a personal package. Status: 🟡 v0.0.6.               │
+│ Plain Amalgame class with `Render(): Element`. No abstract    │
+│ base — AM static dispatch makes parent-virtual overrides      │
+│ unreliable, so a convention reads better and runs more        │
+│ predictably. Encapsulates state + rendering for re-usable     │
+│ widgets a dev ships in a personal package.                    │
+│ Status: ✅ documented + canonical from v0.0.9.                 │
 └─────────────────────────┬────────────────────────────────────┘
                           │ Render() returns
 ┌─────────────────────────▼────────────────────────────────────┐
@@ -111,10 +114,13 @@ For one-off needs that don't justify a builder:
 ```amalgame
 Element.Div().Raw("<svg><circle r=20 cx=20 cy=20 fill=red/></svg>")
 Element.Button("Go").On("custom-event", h)
-Page.AddJs("file:///abs/scripts/lib.js")     // 🟡 v0.0.6
-Page.RawHead("<meta name=foo content=bar>")   // 🟡 v0.0.6
+Page.AddCss("file:///abs/styles/app.css")    // ✅ since v0.0.4
 Window.Eval("document.body.classList.add('compact')")
 ```
+
+A `Page.AddJs(url)` / `Page.RawHead(meta)` pair is planned for
+v0.1+ — until then, drive external JS via `Window.Eval` (or a
+`Window.Init` for pre-navigation injection).
 
 ---
 
@@ -124,26 +130,29 @@ When a widget tree repeats across screens (login form, settings panel,
 data row), promote it to a reusable `Component`. Status: 🟡 v0.0.6.
 
 ```amalgame
-public class LabeledInput : Component {
-    public Label: string
-    public Name:  string
+public class LabeledInput {
+    public Caption: string
+    public Name:    string
 
-    public LabeledInput(label: string, name: string) {
-        this.Label = label
-        this.Name  = name
+    public LabeledInput(caption: string, name: string) {
+        this.Caption = caption
+        this.Name    = name
     }
 
-    public override Element Render() {
+    public Element Render() {
         return Element.Row()
-            .AddChild(Element.Label(this.Label).Style("min-width:80px"))
+            .AddChild(Element.Label(this.Caption).Size(120, 0))
             .AddChild(Element.Input(this.Name))
     }
 }
 
 // usage
+let first: LabeledInput = new LabeledInput("First name:", "first")
+let last:  LabeledInput = new LabeledInput("Last name:",  "last")
+
 Element.Stack()
-    .AddComponent(new LabeledInput("Name:",  "user"))
-    .AddComponent(new LabeledInput("Email:", "email"))
+    .AddChild(first.Render())
+    .AddChild(last.Render())
 ```
 
 Components ship as **regular Amalgame packages**:
@@ -152,40 +161,52 @@ Components ship as **regular Amalgame packages**:
 amalgame package add my-team-widgets
 ```
 
-Their facade exposes subclasses of `Component`. No engine support
-needed — `Component` is purely a convention + an `Element AddComponent`
-helper on Element / Stack / Page.
+Their facade exposes plain classes with a `Render()` method. No
+engine support needed — `Component` is a convention, not a base
+class. Consumers compose `.Render()` like any other Element
+source.
+
+amc bug-of-the-day worth knowing about: chaining
+`new LabeledInput(...).Render()` in one expression used to lower
+incorrectly. Fixed in amc v0.8.16; on older compilers, split via
+a `let x = new LabeledInput(...)` intermediate.
 
 ---
 
 ## Level 3 — `Form` (WinForms-style entrypoint)
 
-A `Form` wraps `Window + Page + Element.Stack` to read like
-WinForms boilerplate. Status: 🟡 v0.0.6.
+`Form` is a value-style wrapper around `Window + Page` that reads
+like WinForms boilerplate without forcing subclass inheritance.
+Status: ✅ shipped v0.0.7. Plain class, public mutable fields,
+optional `OnLoad` closure — no virtual overrides to defeat.
 
 ```amalgame
-public class MainForm : Form {
-    public override void OnLoad() {
-        this.Title = "My App"
-        this.Size(800, 600)
-        this.Add(Element.Button("Quit").OnClick((req) => this.Close()))
-    }
-
-    public override bool OnClosing() {
-        return MessageBox.YesNo("Save before quitting?")
-    }
-}
-
 class Program {
     public static void Main() {
-        Application.Run(new MainForm())
+        let f: Form = new Form("My App", 800, 600)
+        f.SetTheme("auto")
+        f.SetDebug(false)
+        f.OnLoad((req: string) => {
+            // late `Window.Bind` registrations go here
+            return ""
+        })
+        f.SetBody(
+            Element.Stack()
+                .AddChild(Element.MenuBar()
+                    .AddChild(Element.MenuItem("File")
+                        .AddChild(Element.MenuOption("Quit", "amc_quit"))))
+                .AddChild(Element.Button("Hello").OnClick((req) => "\"hi\""))
+        )
+        Application.Run(f)
     }
 }
 ```
 
-`Form` is mostly sugar — under the hood it's the existing
-`Window + Page + ApplyTo`. Theme, lifecycle hooks, and menubar
-binding (v0.1.0) live here.
+`Form` is sugar — under the hood it's the existing
+`Window + Page + ApplyTo + Run + Destroy` sequence. Theme,
+lifecycle hooks, and MenuBar action bindings live around it.
+A future `OnClosing` hook for "save before quitting" prompts is
+planned alongside the native MenuBar opt-in (v0.1.0).
 
 ---
 
@@ -196,9 +217,13 @@ calls these directly but can override or extend them.
 
 ### `window.__amc_collect()`
 Returns a JSON object of every named form field's current value.
-Booleans for checkboxes, selected value for radio groups, multi-
-select arrays for `<select multiple>` (planned v0.0.6). Every event
-handler receives `JSON.stringify(__amc_collect())` as `req`.
+Booleans for checkboxes, selected value for radio groups,
+`.innerHTML` for `[contenteditable][name]` (RichTextBox, v0.0.9),
+ISO `YYYY-MM-DD` for `.amc-monthcal[name]` (MonthCalendar,
+v0.0.9). Multi-select arrays for `<select multiple>` are still
+not auto-collected — read `.selectedOptions` via `Window.Eval`.
+Every event handler receives `JSON.stringify(__amc_collect())`
+as `req`.
 
 ### `window.__amc_route(promise, targetId)`
 Awaits a handler's return promise and writes the result into
