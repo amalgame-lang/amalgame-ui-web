@@ -1,19 +1,51 @@
 import Amalgame.UI.Web
 
 // Visual gallery — opens a real webview window that surfaces every
-// widget added in v0.0.5, grouped by WinForms toolbox category. Run
-// to *see* the controls under the OS theme; the output panel at the
-// bottom of each block echoes the form payload when you click the
-// section's Submit button.
+// widget added across v0.0.5 → v0.0.9, grouped by tab. Run to
+// *see* the controls under the OS theme; output panels echo the
+// form payload of each interactive zone.
 //
 //   bash tests/build_spike.sh spike_gallery && ./build/spike_gallery
-//
-// Tabs split the gallery into manageable screens so the window
-// height stays reasonable on a laptop.
+
+// v0.0.9 — Component pattern: a reusable widget is a regular AM
+// class with a Render() method that returns an Element. No
+// abstract base / interface (AM static dispatch makes virtual
+// overrides on a parent class unreliable), so the convention is
+// flat and predictable.
+
+public class LabeledInput {
+    public Caption: string
+    public Name:    string
+
+    public LabeledInput(caption: string, name: string) {
+        this.Caption = caption
+        this.Name    = name
+    }
+
+    public Element Render() {
+        return Element.Row()
+            .AddChild(Element.Label(this.Caption).Size(120, 0))
+            .AddChild(Element.Input(this.Name))
+    }
+}
 
 class Program {
+    // Component pattern in action — three LabeledInput instances
+    // composed via Render(). Split into a helper so the
+    // `new LabeledInput(...).Render()` chain has its `let`
+    // intermediates (amc bug: direct inline chain misbehaves).
+    public static Element BuildLabeledStack() {
+        let first: LabeledInput = new LabeledInput("First name:", "v09-first")
+        let last:  LabeledInput = new LabeledInput("Last name:",  "v09-last")
+        let mail:  LabeledInput = new LabeledInput("Email:",      "v09-email")
+        return Element.Stack()
+            .AddChild(first.Render())
+            .AddChild(last.Render())
+            .AddChild(mail.Render())
+    }
+
     public static void Main() {
-        let win: Window = new Window("amalgame-ui-web v0.0.5 — gallery", 920, 720, true)
+        let win: Window = new Window("amalgame-ui-web v0.0.5 → v0.0.9 — gallery", 980, 760, true)
         if (!win.IsValid()) {
             return
         }
@@ -196,32 +228,114 @@ class Program {
                     .AddChild(Element.Button("Save 'demo.txt'").Attr("onclick", "window.amc_save_file('');")))
                 .AddChild(Element.Pre("(open a file or trigger a save — result echoes here)").Id("file-result").Size(0, 60)))
 
+        // ── Tab 7 — v0.0.8 (SplitContainer + ContextMenu + FileReader) ──
+        let splitLeft: Element = Element.Stack()
+            .AddChild(Element.Heading("Sidebar").Style("margin:0;font-size:13px"))
+            .AddChild(Element.TreeView()
+                .AddChild(Element.TreeNode("Items").Attr("open", "open")
+                    .AddChild(Element.TreeLeaf("Alpha"))
+                    .AddChild(Element.TreeLeaf("Beta"))
+                    .AddChild(Element.TreeLeaf("Gamma"))))
+
+        let splitCtxMenu: Element = Element.ContextMenu("v08-ctx-target")
+            .AddChild(Element.MenuOption("Cut",   "amc_v08_cut"))
+            .AddChild(Element.MenuOption("Copy",  "amc_v08_copy"))
+            .AddChild(Element.MenuOption("Paste", "amc_v08_paste"))
+            .AddChild(Element.MenuSeparator())
+            .AddChild(Element.MenuOption("Select all", "amc_v08_selall"))
+
+        let splitRight: Element = Element.Div()
+            .Id("v08-ctx-target")
+            .Class("amc-ctx-target")
+            .Style("padding:8px")
+            .AddChild(splitCtxMenu)
+            .AddChild(Element.Heading("Right pane — right-click for context menu").Style("margin:0;font-size:13px"))
+            .AddChild(Element.Label("Try the SplitContainer divider — drag horizontally to resize the panes.").Style("color:var(--amc-muted);font-size:12px"))
+            .AddChild(Element.Pre("(context menu choice echoes here)").Id("v08-ctx-result").Size(0, 60))
+
+        let v08: Element = Element.Stack()
+            .AddChild(Element.Heading("v0.0.8 — SplitContainer + ContextMenu + FileReader"))
+            .AddChild(Element.GroupBox("SplitContainer (drag the vertical divider)")
+                .AddChild(Element.SplitContainer("row", 35)
+                    .AddChild(splitLeft)
+                    .AddChild(splitRight)
+                    .Style("height:200px;border:1px solid var(--amc-border);border-radius:var(--amc-radius)")))
+            .AddChild(Element.GroupBox("Dialog.OpenFileContent — reads the file content via FileReader")
+                .AddChild(Element.Row()
+                    .AddChild(Element.Button("Open file content").Attr("onclick", "window.amc_v08_open_content('');")))
+                .AddChild(Element.Pre("(open a text file — name + first 200 chars echo here)").Id("v08-content-result").Size(0, 80)))
+
+        // ── Tab 8 — v0.0.9 (RichTextBox + MonthCalendar + Component) ──
+        let v09Personal: Element = Program.BuildLabeledStack()
+        let v09: Element = Element.Stack()
+            .AddChild(Element.Heading("v0.0.9 — RichTextBox + MonthCalendar + Component pattern"))
+            .AddChild(Element.GroupBox("RichTextBox (contenteditable — paste rich text, Ctrl-B/I/U)")
+                .AddChild(Element.RichTextBox("v09-notes")
+                    .Attr("placeholder-text", "Write — paste — bold — italic…")
+                    .Style("min-height:80px")))
+            .AddChild(Element.GroupBox("MonthCalendar (inline picker — click a day)")
+                .AddChild(Element.Row()
+                    .AddChild(Element.MonthCalendar("v09-birthday",    2026, 5))
+                    .AddChild(Element.MonthCalendar("v09-anniversary", 2026, 6))))
+            .AddChild(Element.GroupBox("Component pattern — LabeledInput class reused × 3")
+                .AddChild(v09Personal))
+            .AddChild(Element.Row()
+                .AddChild(Element.Button("Submit v0.0.9 form")
+                    .OnClick((req: string) => req)
+                    .OnResult("v09-result")))
+            .AddChild(Element.Pre("(click Submit to see all v0.0.9 form values)").Id("v09-result").Size(0, 140))
+
         // ── Compose the tabbed page ──────────────────────────
         // FillViewport() pins the body to 100vh — the TabControl
         // grows to fill remaining vertical space and scrolls
         // internally, so we don't get a window-level scrollbar
         // when one tab's content is taller than the viewport.
+        // App-level MenuBar (v0.0.8) — File / View / Help. Wires
+        // are bound below after ApplyTo.
+        let menubar: Element = Element.MenuBar()
+            .AddChild(Element.MenuItem("File")
+                .AddChild(Element.MenuOption("New",   "amc_menu_new"))
+                .AddChild(Element.MenuOption("Open…", "amc_menu_open"))
+                .AddChild(Element.MenuOption("Save…", "amc_menu_save"))
+                .AddChild(Element.MenuSeparator())
+                .AddChild(Element.MenuOption("Quit",  "amc_menu_quit")))
+            .AddChild(Element.MenuItem("View")
+                .AddChild(Element.MenuOption("Toggle theme info", "amc_menu_theme")))
+            .AddChild(Element.MenuItem("Help")
+                .AddChild(Element.MenuOption("About", "amc_menu_about")))
+
         let page: Page = Page.New()
             .SetTitle("amalgame-ui-web — gallery")
             .FillViewport()
+            .FullBleed()
+            .AutoTheme(true)
+            .OnThemeChange((mode: string) => {
+                Console.WriteLine("[gallery] theme changed: " + mode)
+                return ""
+            })
             .SetBody(
                 Element.Stack()
-                    .AddChild(Element.Heading("amalgame-ui-web v0.0.5 — widget gallery"))
-                    .AddChild(Element.Label("Switch tabs to browse the categories. The theme (light/dark) follows your OS — change it from your desktop settings and reopen this window."))
-                    .AddChild(Element.TabControl("gal")
-                        .AddChild(Element.Tab("gal", "inputs", "Text inputs", textInputs)
-                            .Attr("checked", "checked"))
-                        .AddChild(Element.Tab("gal", "choices", "Selection", choiceWidgets))
-                        .AddChild(Element.Tab("gal", "layouts", "Layouts", layouts))
-                        .AddChild(Element.Tab("gal", "tabular", "Tables + events", tabular))
-                        .AddChild(Element.Tab("gal", "dialogs", "Dialogs", dialogs))
-                        .AddChild(Element.Tab("gal", "v07", "v0.0.7", v07)))
+                    .Style("gap:0;height:100%")
+                    .AddChild(menubar)
+                    .AddChild(Element.Stack().Style("padding:12px;flex:1;min-height:0;overflow:hidden")
+                        .AddChild(Element.Heading("amalgame-ui-web v0.0.5 → v0.0.9 — widget gallery"))
+                        .AddChild(Element.Label("Switch tabs to browse the categories. Theme flips live when your OS theme changes (matchMedia + 1.5s polling fallback)."))
+                        .AddChild(Element.TabControl("gal")
+                            .AddChild(Element.Tab("gal", "inputs", "Text inputs", textInputs)
+                                .Attr("checked", "checked"))
+                            .AddChild(Element.Tab("gal", "choices", "Selection", choiceWidgets))
+                            .AddChild(Element.Tab("gal", "layouts", "Layouts", layouts))
+                            .AddChild(Element.Tab("gal", "tabular", "Tables + events", tabular))
+                            .AddChild(Element.Tab("gal", "dialogs", "Dialogs", dialogs))
+                            .AddChild(Element.Tab("gal", "v07", "v0.0.7", v07))
+                            .AddChild(Element.Tab("gal", "v08", "v0.0.8", v08))
+                            .AddChild(Element.Tab("gal", "v09", "v0.0.9", v09))))
                     .AddChild(Element.StatusStrip()
                         .AddChild(Element.Label("Ready"))
                         .AddChild(Element.Label("|"))
-                        .AddChild(Element.Label("ui-web v0.0.5 gallery"))
+                        .AddChild(Element.Label("ui-web v0.0.5 → v0.0.9 rollup"))
                         .AddChild(Element.Label("|"))
-                        .AddChild(Element.Label("OS-themed (light/dark auto)")))
+                        .AddChild(Element.Label("OS-themed (light/dark live)")))
             )
 
         // Bind the "Add row" handler BEFORE ApplyTo so the binding
@@ -305,6 +419,58 @@ class Program {
                 return ""
             })
             return "true"
+        })
+
+        // v0.0.8 — MenuBar handlers.
+        win.Bind("amc_menu_new",   (req: string) => { Console.WriteLine("[menu] New")    return "" })
+        win.Bind("amc_menu_open",  (req: string) => {
+            Dialog.OpenFile(win, "", (name: string) => {
+                Console.WriteLine("[menu] Open: " + name)
+                return ""
+            })
+            return ""
+        })
+        win.Bind("amc_menu_save",  (req: string) => {
+            Dialog.SaveFile(win, "notes.txt", "Saved from the gallery MenuBar > File > Save.", "text/plain", (r: string) => {
+                Console.WriteLine("[menu] Save: " + r)
+                return ""
+            })
+            return ""
+        })
+        win.Bind("amc_menu_quit",  (req: string) => { win.Terminate() return "" })
+        win.Bind("amc_menu_theme", (req: string) => {
+            Console.WriteLine("[menu] (theme info — change your OS theme to see AutoTheme flip live)")
+            return ""
+        })
+        win.Bind("amc_menu_about", (req: string) => {
+            Dialog.Info(win, "About", "amalgame-ui-web — webview-based GUI binding for Amalgame.\nRolled-up gallery v0.0.5 → v0.0.9.", (r: string) => "")
+            return ""
+        })
+
+        // v0.0.8 — ContextMenu handlers (right-click on the
+        // right pane of the SplitContainer).
+        win.Bind("amc_v08_cut",    (req: string) => { win.SetInnerHtml("v08-ctx-result", "Context: Cut")        return "" })
+        win.Bind("amc_v08_copy",   (req: string) => { win.SetInnerHtml("v08-ctx-result", "Context: Copy")       return "" })
+        win.Bind("amc_v08_paste",  (req: string) => { win.SetInnerHtml("v08-ctx-result", "Context: Paste")      return "" })
+        win.Bind("amc_v08_selall", (req: string) => { win.SetInnerHtml("v08-ctx-result", "Context: Select all") return "" })
+
+        // v0.0.8 — OpenFileContent (FileReader reads the bytes).
+        win.Bind("amc_v08_open_content", (req: string) => {
+            Dialog.OpenFileContent(win, "", false, (payload: string) => {
+                if (String_Length(payload) == 0) {
+                    win.SetInnerHtml("v08-content-result", "(cancelled)")
+                    return ""
+                }
+                // payload = {"name":"...","content":"..."} — truncate
+                // to keep the echo readable.
+                var preview: string = payload
+                if (String_Length(preview) > 220) {
+                    preview = String_Substring(preview, 0, 220) + "…"
+                }
+                win.SetInnerHtml("v08-content-result", preview)
+                return ""
+            })
+            return ""
         })
 
         page.ApplyTo(win)
