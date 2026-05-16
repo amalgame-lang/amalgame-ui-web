@@ -2,7 +2,50 @@
 
 All notable changes to `amalgame-ui-web` are recorded here.
 
-## [Unreleased] — v0.0.9-dev
+## [v0.0.10] — 2026-05-16
+
+### Added — MonthCalendar navigator
+
+The header of `Element.MonthCalendar` now ships with ◀ / month
+dropdown / year dropdown / ▶ so the user can jump to any
+month or year directly.
+
+- ◀ / ▶ buttons step ±1 month, rolling at year boundaries.
+- Month dropdown jumps to any of Jan–Dec.
+- Year dropdown spans `this_year - 80 … this_year + 30` by
+  default. If the AM-side initial year falls outside that
+  range, the dropdown auto-extends with the requested year so
+  it still appears.
+- Any navigation clears `data-selected` so a day-of-month
+  highlighted in the previous view doesn't carry over.
+- The form payload via `__amc_collect` is unchanged
+  (`YYYY-MM-DD` ISO string under the widget's `name`); the key
+  is absent when no day is selected.
+
+### Fixed — MonthCalendar empty grid on first load
+
+`Page.ApplyTo` registered the init JS via `Window.Init`, which
+runs *before* the document is parsed. The first call to
+`__amc_init_monthcal()` therefore saw `document.body == null`
+and rendered nothing. Now deferred via `DOMContentLoaded` (with
+an immediate fallback when already loaded — the case during
+`Page.PatchInner` re-injections).
+
+### Changed — Rolled-up `spike_gallery`
+
+Single demo app that surfaces every widget shipped from v0.0.5
+to v0.0.9 under one window. Eight tabs:
+
+1. Text inputs · 2. Selection · 3. Layouts · 4. Tables + events
+5. Dialogs (v0.0.6) · 6. v0.0.7 (TreeView + file dialogs)
+7. v0.0.8 (SplitContainer + ContextMenu + FileReader)
+8. v0.0.9 (RichTextBox + MonthCalendar + Component)
+
+Plus an app-level MenuBar (File / View / Help), a StatusStrip
+footer, `Page.FullBleed()` + `Page.AutoTheme(true)` so the
+window flips with the OS color scheme live.
+
+## [v0.0.9] — 2026-05-16
 
 ### Added — `Element.RichTextBox(name)`
 
