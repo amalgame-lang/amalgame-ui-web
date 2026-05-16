@@ -30,20 +30,6 @@ public class LabeledInput {
 }
 
 class Program {
-    // Component pattern in action — three LabeledInput instances
-    // composed via Render(). Split into a helper so the
-    // `new LabeledInput(...).Render()` chain has its `let`
-    // intermediates (amc bug: direct inline chain misbehaves).
-    public static Element BuildLabeledStack() {
-        let first: LabeledInput = new LabeledInput("First name:", "v09-first")
-        let last:  LabeledInput = new LabeledInput("Last name:",  "v09-last")
-        let mail:  LabeledInput = new LabeledInput("Email:",      "v09-email")
-        return Element.Stack()
-            .AddChild(first.Render())
-            .AddChild(last.Render())
-            .AddChild(mail.Render())
-    }
-
     public static void Main() {
         let win: Window = new Window("amalgame-ui-web v0.0.5 → v0.0.9 — gallery", 980, 760, true)
         if (!win.IsValid()) {
@@ -266,7 +252,12 @@ class Program {
                 .AddChild(Element.Pre("(open a text file — name + first 200 chars echo here)").Id("v08-content-result").Size(0, 80)))
 
         // ── Tab 8 — v0.0.9 (RichTextBox + MonthCalendar + Component) ──
-        let v09Personal: Element = Program.BuildLabeledStack()
+        // Component pattern: inline `new X(...).Render()` since
+        // amc v0.8.16 (earlier versions needed `let` intermediates).
+        let v09Personal: Element = Element.Stack()
+            .AddChild(new LabeledInput("First name:", "v09-first").Render())
+            .AddChild(new LabeledInput("Last name:",  "v09-last").Render())
+            .AddChild(new LabeledInput("Email:",      "v09-email").Render())
         let v09: Element = Element.Stack()
             .AddChild(Element.Heading("v0.0.9 — RichTextBox + MonthCalendar + Component pattern"))
             .AddChild(Element.GroupBox("RichTextBox (contenteditable — paste rich text, Ctrl-B/I/U)")

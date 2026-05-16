@@ -35,21 +35,6 @@ public class LabeledInput {
 }
 
 class Program {
-    // Component pattern in action — build a stack of three
-    // LabeledInput widgets. Split into a static helper so the
-    // `new LabeledInput(...).Render()` chain has its `let`
-    // intermediates (amc doesn't yet codegen the inline chain
-    // correctly).
-    public static Element BuildPersonForm() {
-        let first: LabeledInput = new LabeledInput("First name:", "first")
-        let last:  LabeledInput = new LabeledInput("Last name:",  "last")
-        let mail:  LabeledInput = new LabeledInput("Email:",      "email")
-        return Element.Stack()
-            .AddChild(first.Render())
-            .AddChild(last.Render())
-            .AddChild(mail.Render())
-    }
-
     public static void Main() {
         let win: Window = new Window("amalgame-ui-web v0.0.9 — RichTextBox + MonthCalendar + Component", 900, 600, true)
         if (!win.IsValid()) { return }
@@ -67,11 +52,13 @@ class Program {
                     .AddChild(Element.MonthCalendar("birthday", 2026, 5))
                     .AddChild(Element.MonthCalendar("anniversary", 2026, 6))))
 
-            // Component pattern usage — instantiate via `let`
-            // intermediates (amc's static-dispatch on `new X(...).Method()`
-            // chain misbehaves; standard workaround documented in
-            // 04-layout-and-theme.md "Fluent chain limits").
-            .AddChild(Element.GroupBox("Component pattern — LabeledInput widget reused").AddChild(Program.BuildPersonForm()))
+            // Component pattern usage — inline `new X(...).Render()`
+            // works directly since amc v0.8.16 (chained method on a
+            // constructor). Earlier versions needed `let` intermediates.
+            .AddChild(Element.GroupBox("Component pattern — LabeledInput widget reused")
+                .AddChild(new LabeledInput("First name:", "first").Render())
+                .AddChild(new LabeledInput("Last name:",  "last").Render())
+                .AddChild(new LabeledInput("Email:",      "email").Render()))
 
             .AddChild(Element.Row()
                 .AddChild(Element.Button("Submit")
